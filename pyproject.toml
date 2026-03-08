@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cosmin-assistant"
+version = "0.1.0"
+description = "Scaffold for deterministic COSMIN appraisal of outcome measurement studies"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "COSMIN Assistant Contributors" }]
+dependencies = ["pydantic>=2.8,<3"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2,<9",
+  "mypy>=1.10,<2",
+  "ruff>=0.5,<1",
+  "black>=24.4,<25",
+  "pre-commit>=3.7,<4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cosmin_assistant"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_scaffold"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["cosmin_assistant"]
+strict = true
+warn_unused_configs = true

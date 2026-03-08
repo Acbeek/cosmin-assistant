@@ -1,0 +1,1 @@
+"""Scaffold module placeholder."""
