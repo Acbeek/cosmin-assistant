@@ -1,0 +1,309 @@
+version: "0.1"
+status: "repository starter draft"
+scope:
+  reference_profile: "prom"
+  adapted_profiles:
+    - "pbom"
+    - "activity_monitor"
+  note: >
+    The COSMIN guideline was developed for PROM systematic reviews.
+    Non-PROM use requires explicit adaptation of steps 5-7 and must not be
+    treated as automatically equivalent.
+
+source_documents:
+  guideline:
+    title: "COSMIN guideline for systematic reviews of patient-reported outcome measures"
+    year: 2018
+  rob_checklist:
+    title: "COSMIN Risk of Bias checklist"
+    version: "3.1"
+    date: "2024-08-27"
+  good_measurement_and_grade:
+    title: "Good measurement properties criteria and modified GRADE list"
+  table_templates:
+    title: "Systematic reviews of PROMs: table templates for effective communication"
+    year: 2025
+
+workflow:
+  steps:
+    - id: 1
+      name: "formulate_review_aim"
+    - id: 2
+      name: "formulate_eligibility_criteria"
+    - id: 3
+      name: "perform_literature_search"
+    - id: 4
+      name: "select_abstracts_and_full_text_articles"
+    - id: 5
+      name: "evaluate_content_validity"
+    - id: 6
+      name: "evaluate_internal_structure"
+      substeps:
+        - "structural_validity"
+        - "internal_consistency"
+        - "cross_cultural_validity_measurement_invariance"
+    - id: 7
+      name: "evaluate_remaining_measurement_properties"
+      substeps:
+        - "reliability"
+        - "measurement_error"
+        - "criterion_validity"
+        - "hypotheses_testing_for_construct_validity"
+        - "responsiveness"
+    - id: 8
+      name: "describe_interpretability_and_feasibility"
+    - id: 9
+      name: "formulate_recommendations"
+    - id: 10
+      name: "report_systematic_review"
+
+review_aim_elements:
+  required:
+    - "construct"
+    - "population"
+    - "instrument_type"
+    - "measurement_properties_of_interest"
+
+rob:
+  item_ratings:
+    - "very_good"
+    - "adequate"
+    - "doubtful"
+    - "inadequate"
+    - "na"
+
+  box_order:
+    - id: 1
+      name: "prom_development"
+    - id: 2
+      name: "content_validity"
+    - id: 3
+      name: "structural_validity"
+    - id: 4
+      name: "internal_consistency"
+    - id: 5
+      name: "cross_cultural_validity_measurement_invariance"
+    - id: 6
+      name: "reliability"
+    - id: 7
+      name: "measurement_error"
+    - id: 8
+      name: "criterion_validity"
+    - id: 9
+      name: "hypotheses_testing_for_construct_validity"
+    - id: 10
+      name: "responsiveness"
+
+  box_aggregation:
+    method: "worst_score_counts"
+    description: >
+      Overall methodological quality for a study within a box is the lowest
+      rating of any applicable standard in that box.
+    na_policy: >
+      Standards rated NA are excluded from worst-score-counts aggregation when
+      they are genuinely not applicable.
+
+ratings:
+  study_or_summary_result:
+    sufficient: "+"
+    insufficient: "-"
+    indeterminate: "?"
+    inconsistent: "±"
+
+  evidence_certainty:
+    - "high"
+    - "moderate"
+    - "low"
+    - "very_low"
+
+measurement_property_rules:
+  structural_validity:
+    rating_plus:
+      ctt:
+        any_of:
+          - "CFI > 0.95"
+          - "TLI > 0.95"
+          - "comparable_fit_index > 0.95"
+          - "RMSEA < 0.06"
+          - "SRMR < 0.08"
+      irt_rasch:
+        all_of:
+          - "no_violation_of_unidimensionality"
+          - "no_violation_of_local_independence"
+          - "no_violation_of_monotonicity"
+          - "adequate_model_fit"
+        operationalization:
+          unidimensionality_any_of:
+            - "CFI > 0.95"
+            - "TLI > 0.95"
+            - "comparable_fit_index > 0.95"
+            - "RMSEA < 0.06"
+            - "SRMR < 0.08"
+          local_independence_any_of:
+            - "residual_correlations < 0.20"
+            - "Q3 < 0.37"
+          monotonicity_any_of:
+            - "adequate_looking_graphs"
+            - "item_scalability > 0.30"
+          model_fit_any_of:
+            - "IRT chi_square_p > 0.001"
+            - "Rasch infit_outfit_mean_squares between 0.5 and 1.5"
+            - "Rasch z_standardized_values between -2 and 2"
+    rating_question:
+      - "CTT not all information for plus reported"
+      - "IRT or Rasch model fit not reported"
+    rating_minus:
+      - "criteria_for_plus_not_met"
+
+  internal_consistency:
+    rating_plus:
+      all_of:
+        - "at_least_low_evidence_for_sufficient_structural_validity"
+        - "Cronbach_alpha >= 0.70 for each unidimensional scale_or_subscale"
+    rating_question:
+      - "criterion at_least_low_evidence_for_sufficient_structural_validity not met"
+    rating_minus:
+      all_of:
+        - "at_least_low_evidence_for_sufficient_structural_validity"
+        - "Cronbach_alpha < 0.70 for each unidimensional scale_or_subscale"
+
+  reliability:
+    rating_plus:
+      any_of:
+        - "ICC >= 0.70"
+        - "weighted_kappa >= 0.70"
+    rating_question:
+      - "ICC not reported"
+      - "weighted_kappa not reported"
+    rating_minus:
+      any_of:
+        - "ICC < 0.70"
+        - "weighted_kappa < 0.70"
+
+  measurement_error:
+    rating_plus:
+      any_of:
+        - "SDC < MIC"
+        - "LoA < MIC"
+    rating_question:
+      - "MIC not defined"
+    rating_minus:
+      any_of:
+        - "SDC > MIC"
+        - "LoA > MIC"
+
+  hypotheses_testing_for_construct_validity:
+    rating_plus:
+      - "result_in_accordance_with_hypothesis"
+    rating_question:
+      - "no_hypothesis_defined_by_review_team"
+    rating_minus:
+      - "result_not_in_accordance_with_hypothesis"
+
+  cross_cultural_validity_measurement_invariance:
+    rating_plus:
+      any_of:
+        - "no_important_group_differences_in_multiple_group_factor_analysis"
+        - "no_important_DIF_for_group_factors_with_McFaddens_R2 < 0.02"
+    rating_question:
+      - "no_multiple_group_factor_analysis_or_DIF_analysis_performed"
+    rating_minus:
+      any_of:
+        - "important_group_differences_found"
+        - "important_DIF_found"
+
+  criterion_validity:
+    rating_plus:
+      any_of:
+        - "correlation_with_gold_standard >= 0.70"
+        - "AUC >= 0.70"
+    rating_question:
+      - "not_all_information_for_plus_reported"
+    rating_minus:
+      any_of:
+        - "correlation_with_gold_standard < 0.70"
+        - "AUC < 0.70"
+
+  responsiveness:
+    rating_plus:
+      any_of:
+        - "result_in_accordance_with_hypothesis"
+        - "AUC >= 0.70"
+    rating_question:
+      - "no_hypothesis_defined_by_review_team"
+    rating_minus:
+      any_of:
+        - "result_not_in_accordance_with_hypothesis"
+        - "AUC < 0.70"
+
+content_validity:
+  note: >
+    Content validity is evaluated first and is considered the most important
+    measurement property. The evaluation requires reviewer judgment and should
+    combine PROM development evidence, content-validity studies, and reviewer
+    appraisal of relevance, comprehensiveness, and comprehensibility.
+  stop_rule: >
+    If there is high-quality evidence that content validity is insufficient,
+    the PROM should not be further considered in steps 6-8.
+
+synthesis:
+  study_level_result_symbols:
+    sufficient: "+"
+    insufficient: "-"
+    indeterminate: "?"
+  overall_result_symbols:
+    sufficient: "+"
+    insufficient: "-"
+    inconsistent: "±"
+    indeterminate: "?"
+  rules:
+    - "If all study results are sufficient, overall rating can be sufficient."
+    - "If all study results are insufficient, overall rating can be insufficient."
+    - "If results are inconsistent, explore explanations."
+    - "If explanation is found, report subgroup-specific ratings."
+    - "If no explanation is found, overall rating is inconsistent."
+    - "If information is insufficient, overall rating is indeterminate."
+    - "Treat each PROM version, language version, and subscale separately."
+
+modified_grade:
+  start_level: "high"
+  downgrade_factors:
+    risk_of_bias:
+      - level: -1
+        label: "serious"
+      - level: -2
+        label: "very_serious"
+      - level: -3
+        label: "extremely_serious"
+    inconsistency:
+      - level: -1
+        label: "serious"
+      - level: -2
+        label: "very_serious"
+    imprecision:
+      - level: -1
+        condition: "total_n = 50-100"
+      - level: -2
+        condition: "total_n < 50"
+    indirectness:
+      - level: -1
+        label: "serious"
+      - level: -2
+        label: "very_serious"
+
+reviewer_required_decisions:
+  - "target_population_match"
+  - "context_of_use_match"
+  - "reflective_vs_formative_model_if_not_reported"
+  - "adequacy_of_predefined_hypotheses"
+  - "explanation_of_inconsistency"
+  - "seriousness_of_indirectness"
+  - "pbom_or_activity_specific_adaptation"
+  - "content_validity_judgment"
+
+implementation_policy:
+  deterministic_scoring_only: true
+  traceable_to_evidence_spans: true
+  no_invented_evidence: true
+  preserve_indeterminate_results: true
+  separate_raw_result_from_computed_rating: true
