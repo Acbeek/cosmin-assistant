@@ -83,6 +83,9 @@ This tool is not:
   - domains: risk of bias, inconsistency, imprecision, indirectness
   - imprecision uses sample-size rules (`n=50-100` => serious, `n<50` => very serious)
   - every downgrade stores domain, severity, reason, evidence IDs, and explanation
+- Provisional end-to-end CLI (`cosmin-assess`):
+  - runs one-article deterministic pipeline for PROM profile
+  - exports JSON audit artifacts, markdown summary report, per-study CSV, and DOCX stub
 
 ### 2) Provisional after Task 10
 
@@ -120,7 +123,7 @@ Planned export workflow (not complete yet):
 - `src/cosmin_assistant/measurement_rating/`: deterministic study-level rating modules (initial set)
 - `src/cosmin_assistant/synthesize/`: first-pass synthesis models and aggregation
 - `src/cosmin_assistant/grade/`: modified GRADE first-pass models and downgrading
-- `src/cosmin_assistant/tables/`: table/export stage placeholder (future logic)
+- `src/cosmin_assistant/tables/`: provisional output builders (JSON/MD/CSV + DOCX stub)
 - `tests/`: pytest suite with fixtures
 - `docs/`: method scope and implementation docs
 
@@ -181,7 +184,21 @@ Practical audit checks:
 
 ## Single-article workflow
 
-Use the Python API now (CLI is not fully implemented yet).
+Use the provisional CLI now:
+
+```bash
+cosmin-assess article.md --profile prom --out results/
+```
+
+Current CLI behavior:
+
+- runs one-article pipeline:
+  - parse -> extract -> provisional RoB -> provisional measurement rating ->
+    provisional synthesis -> provisional GRADE -> export
+- supports PROM (`--profile prom`) in this provisional stage
+- writes all core output artifacts to the selected output directory
+
+Equivalent Python API pattern:
 
 ```python
 from pathlib import Path
@@ -206,13 +223,6 @@ stats = extract_statistics_from_markdown_file(article_path)
     stats.model_dump_json(indent=2),
     encoding="utf-8",
 )
-```
-
-Placeholder CLI pattern for future tasks:
-
-```bash
-# Placeholder only: CLI contract may change before stabilization.
-cosmin-assistant run --input data/article_001.md --profile prom --out runs/run_001/
 ```
 
 Current API pattern for initial RoB box assessment:
@@ -341,12 +351,16 @@ Planned workflow after Task 13:
 Status as of current stage:
 
 - available now:
-  - structured extraction objects in memory
-  - JSON files if you serialize model outputs manually
-- not yet fully implemented:
-  - the complete standard output bundle
+  - `evidence.json`
+  - `rob_assessment.json`
+  - `measurement_property_results.json`
+  - `synthesis.json`
+  - `grade.json`
+  - `summary_report.md`
+  - one per-study CSV export
+  - DOCX export stub interface and provisional output
 
-Planned standard bundle (target state):
+Planned refinements:
 
 1. `evidence.json`
 2. `rob_assessment.json`
@@ -357,7 +371,7 @@ Planned standard bundle (target state):
 7. CSV exports
 8. DOCX exports
 
-Until table/export stages are implemented, treat file naming as provisional runbook conventions.
+File names and schemas are provisional and expected to evolve with later table-template work.
 
 ## Best practices
 
@@ -381,12 +395,12 @@ Until table/export stages are implemented, treat file naming as provisional runb
 
 ## Current limitations
 
-- No stable CLI workflow yet.
+- CLI is provisional and currently PROM-focused.
 - COSMIN RoB coverage is initial, limited to Box 3/4/6 modules.
 - Box-level ratings are deterministic from explicit item ratings; item-rating derivation from raw evidence remains limited and should be reviewer-verified.
 - Measurement-property rating coverage is initial, currently limited to structural validity, internal consistency, and reliability.
 - Synthesis and modified GRADE are first-pass implementations and should be calibrated against real review datasets.
-- No final table export layer yet (CSV/DOCX pipeline pending).
+- DOCX export is a clean stub interface, not final COSMIN template rendering.
 - Extraction is pattern-driven and may miss unusual reporting styles; reviewer verification remains required.
 
 ## Planned roadmap

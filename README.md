@@ -71,3 +71,23 @@ Core foundations are implemented and tested:
 - Tests: pytest
 - Hooks: pre-commit
 - CI: GitHub Actions
+
+## Installation
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+## Basic usage (provisional CLI)
+
+```bash
+cosmin-assess article.md --profile prom --out results/
+```
+
+Current Task 10 CLI scope:
+
+- runs a provisional end-to-end pipeline for one article markdown file
+- supports `--profile prom` (PROM) in this provisional version
+- exports JSON, markdown, CSV, and a DOCX stub to the output directory

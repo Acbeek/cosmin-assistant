@@ -10,6 +10,8 @@ from cosmin_assistant.extract.context_models import (
     ContextValueCandidate,
     FieldDetectionStatus,
     InstrumentContextExtractionResult,
+    SampleSizeObservation,
+    SampleSizeRole,
     StudyContextExtractionResult,
     SubsampleExtraction,
 )
@@ -31,6 +33,10 @@ from cosmin_assistant.extract.statistics_extractor import (
 )
 from cosmin_assistant.extract.statistics_models import (
     ArticleStatisticsExtractionResult,
+    EvidenceMethodLabel,
+    EvidenceSourceType,
+    MeasurementPropertyRoute,
+    ResponsivenessHypothesisStatus,
     StatisticCandidate,
     StatisticType,
 )
@@ -40,11 +46,17 @@ __all__ = [
     "ArticleContextExtractionResult",
     "ContextFieldExtraction",
     "ContextValueCandidate",
+    "EvidenceMethodLabel",
+    "EvidenceSourceType",
     "FieldDetectionStatus",
     "HeadingRecord",
     "InstrumentContextExtractionResult",
+    "MeasurementPropertyRoute",
     "ParagraphRecord",
     "ParsedMarkdownDocument",
+    "ResponsivenessHypothesisStatus",
+    "SampleSizeObservation",
+    "SampleSizeRole",
     "SentenceRecord",
     "StatisticCandidate",
     "StatisticType",

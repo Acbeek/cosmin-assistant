@@ -65,6 +65,26 @@ class SubsampleExtraction(ModelBase):
     evidence_span_ids: Annotated[tuple[StableId, ...], Field(min_length=1)]
 
 
+class SampleSizeRole(StrEnum):
+    """Role label for extracted sample-size values."""
+
+    ENROLLMENT = "enrollment"
+    ANALYZED = "analyzed"
+    LIMB_LEVEL = "limb_level"
+    OTHER = "other"
+
+
+class SampleSizeObservation(ModelBase):
+    """Role-aware sample-size extraction object with provenance links."""
+
+    id: StableId
+    role: SampleSizeRole
+    sample_size_raw: NonEmptyText
+    sample_size_normalized: int = Field(ge=0)
+    unit: str | None = None
+    evidence_span_ids: Annotated[tuple[StableId, ...], Field(min_length=1)]
+
+
 class StudyContextExtractionResult(ModelBase):
     """Study-context extraction result for one study unit."""
 
@@ -73,6 +93,8 @@ class StudyContextExtractionResult(ModelBase):
     study_id: StableId
     study_design: ContextFieldExtraction
     sample_sizes: ContextFieldExtraction
+    sample_size_observations: tuple[SampleSizeObservation, ...] = ()
+    follow_up_schedule: ContextFieldExtraction
     construct_field: ContextFieldExtraction = Field(
         validation_alias="construct",
         serialization_alias="construct",
@@ -81,6 +103,8 @@ class StudyContextExtractionResult(ModelBase):
     language: ContextFieldExtraction
     country: ContextFieldExtraction
     measurement_properties_mentioned: ContextFieldExtraction
+    measurement_properties_background: ContextFieldExtraction
+    measurement_properties_interpretability: ContextFieldExtraction
     subsamples: tuple[SubsampleExtraction, ...] = ()
 
 

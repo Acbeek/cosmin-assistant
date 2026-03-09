@@ -32,6 +32,47 @@ class StatisticType(StrEnum):
     RESPONSIVENESS_RELATED_STATISTIC = "responsiveness_related_statistic"
 
 
+class EvidenceSourceType(StrEnum):
+    """Evidence source role for routing direct vs background vs interpretability evidence."""
+
+    CURRENT_STUDY = "current_study"
+    BACKGROUND_CITATION = "background_citation"
+    INTERPRETABILITY_ONLY = "interpretability_only"
+    UNCLEAR = "unclear"
+
+
+class MeasurementPropertyRoute(StrEnum):
+    """Measurement-property buckets used for extraction-time routing support."""
+
+    STRUCTURAL_VALIDITY = "structural_validity"
+    INTERNAL_CONSISTENCY = "internal_consistency"
+    RELIABILITY = "reliability"
+    MEASUREMENT_ERROR_SUPPORT = "measurement_error_support"
+    INTERPRETABILITY = "interpretability"
+    RESPONSIVENESS = "responsiveness"
+    HYPOTHESES_TESTING_FOR_CONSTRUCT_VALIDITY = "hypotheses_testing_for_construct_validity"
+
+
+class EvidenceMethodLabel(StrEnum):
+    """Method labels for MIC/MCID and related interpretability evidence."""
+
+    ANCHOR_BASED = "anchor_based"
+    DISTRIBUTION_BASED = "distribution_based"
+    SEM_BASED = "sem_based"
+    SDC_BASED = "sdc_based"
+    LOA_BASED = "loa_based"
+    MINIMAL_DETECTABLE_CHANGE = "minimal_detectable_change"
+    TEST_RETEST_RELIABILITY = "test_retest_reliability"
+
+
+class ResponsivenessHypothesisStatus(StrEnum):
+    """Whether longitudinal responsiveness hypotheses were predefined."""
+
+    PREDEFINED = "predefined"
+    NOT_PREDEFINED = "not_predefined"
+    NOT_REPORTED = "not_reported"
+
+
 class StatisticCandidate(ModelBase):
     """One extracted statistic candidate with evidence provenance and subgroup context."""
 
@@ -42,6 +83,11 @@ class StatisticCandidate(ModelBase):
     subgroup_label: str | None = None
     evidence_span_ids: Annotated[tuple[StableId, ...], Field(min_length=1)]
     surrounding_text: NonEmptyText
+    instrument_name_hints: tuple[str, ...] = ()
+    evidence_source: EvidenceSourceType = EvidenceSourceType.CURRENT_STUDY
+    measurement_property_routes: tuple[MeasurementPropertyRoute, ...] = ()
+    method_labels: tuple[EvidenceMethodLabel, ...] = ()
+    responsiveness_hypothesis_status: ResponsivenessHypothesisStatus | None = None
 
 
 class ArticleStatisticsExtractionResult(ModelBase):
