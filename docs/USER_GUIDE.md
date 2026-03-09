@@ -72,6 +72,17 @@ This tool is not:
     `evidence_span_ids`, `computed_rating`, and `explanation`
   - explicit prerequisite handling (internal consistency requires structural-validity prerequisite)
   - conflicting evidence returned as `inconsistent` (not auto-resolved)
+- First-pass synthesis:
+  - preserves study-level records before summary
+  - aggregates by instrument name/version/subscale and measurement property
+  - accumulates total sample size
+  - keeps inconsistency explicit (`inconsistent`) without forced resolution
+  - supports subgroup explanation placeholders
+- Modified GRADE first pass:
+  - starts at high certainty and downgrades explicitly
+  - domains: risk of bias, inconsistency, imprecision, indirectness
+  - imprecision uses sample-size rules (`n=50-100` => serious, `n<50` => very serious)
+  - every downgrade stores domain, severity, reason, evidence IDs, and explanation
 
 ### 2) Provisional after Task 10
 
@@ -79,6 +90,7 @@ Planned but still provisional:
 
 - expanded deterministic COSMIN RoB scoring coverage beyond Box 3/4/6
 - expanded deterministic good-measurement-property rating coverage beyond the initial 3 properties
+- expanded synthesis/modified-GRADE coverage and calibration beyond first-pass rules
 - explicit `reviewer_required` hooks where rules are non-deterministic
 
 Treat any post-Task-10 behavior as provisional until validated on real papers and documented in the decision log.
@@ -106,8 +118,8 @@ Planned export workflow (not complete yet):
 - `src/cosmin_assistant/profiles/`: PROM/PBOM/activity profile capability metadata
 - `src/cosmin_assistant/cosmin_rob/`: RoB infrastructure + initial Box 3/4/6 modules
 - `src/cosmin_assistant/measurement_rating/`: deterministic study-level rating modules (initial set)
-- `src/cosmin_assistant/synthesize/`: synthesis stage placeholder (future logic)
-- `src/cosmin_assistant/grade/`: modified GRADE stage placeholder (future logic)
+- `src/cosmin_assistant/synthesize/`: first-pass synthesis models and aggregation
+- `src/cosmin_assistant/grade/`: modified GRADE first-pass models and downgrading
 - `src/cosmin_assistant/tables/`: table/export stage placeholder (future logic)
 - `tests/`: pytest suite with fixtures
 - `docs/`: method scope and implementation docs
@@ -263,6 +275,52 @@ result = rate_internal_consistency(
 )
 ```
 
+Current API pattern for first-pass synthesis and modified GRADE:
+
+```python
+from cosmin_assistant.grade import (
+    DomainDowngradeInput,
+    DowngradeSeverity,
+    ModifiedGradeDomain,
+    apply_modified_grade,
+)
+from cosmin_assistant.models import MeasurementPropertyRating
+from cosmin_assistant.synthesize import StudySynthesisInput, synthesize_first_pass
+
+study_results = (
+    StudySynthesisInput(
+        id="mpr.800",
+        study_id="study.800",
+        instrument_name="PROM-X",
+        instrument_version="v1",
+        subscale="total",
+        measurement_property="reliability",
+        rating=MeasurementPropertyRating.SUFFICIENT,
+        sample_size=88,
+        evidence_span_ids=("sen.800",),
+    ),
+)
+
+synthesis = synthesize_first_pass(study_results)[0]
+grade = apply_modified_grade(
+    synthesis_result=synthesis,
+    risk_of_bias=DomainDowngradeInput(
+        domain=ModifiedGradeDomain.RISK_OF_BIAS,
+        severity=DowngradeSeverity.SERIOUS,
+        reason="Most studies had doubtful methods.",
+        evidence_span_ids=("sen.800",),
+        explanation="Downgraded one level for risk of bias.",
+    ),
+    indirectness=DomainDowngradeInput(
+        domain=ModifiedGradeDomain.INDIRECTNESS,
+        severity=DowngradeSeverity.NONE,
+        reason=None,
+        evidence_span_ids=(),
+        explanation=None,
+    ),
+)
+```
+
 ## Reviewer-in-the-loop workflow
 
 Current practical workflow:
@@ -327,14 +385,14 @@ Until table/export stages are implemented, treat file naming as provisional runb
 - COSMIN RoB coverage is initial, limited to Box 3/4/6 modules.
 - Box-level ratings are deterministic from explicit item ratings; item-rating derivation from raw evidence remains limited and should be reviewer-verified.
 - Measurement-property rating coverage is initial, currently limited to structural validity, internal consistency, and reliability.
-- No completed synthesis and modified GRADE implementation yet.
+- Synthesis and modified GRADE are first-pass implementations and should be calibrated against real review datasets.
 - No final table export layer yet (CSV/DOCX pipeline pending).
 - Extraction is pattern-driven and may miss unusual reporting styles; reviewer verification remains required.
 
 ## Planned roadmap
 
-- Task 9-10: expand deterministic COSMIN RoB and measurement-property rating coverage beyond the initial modules
-- Task 11-13: add synthesis logic, modified GRADE downgrading, and explicit reviewer decision lifecycle
+- Task 10: expand deterministic COSMIN RoB, measurement-property rating, synthesis, and modified-GRADE coverage beyond first-pass rules
+- Task 11-13: extend synthesis and modified-GRADE logic and add explicit reviewer decision lifecycle
 - Task 14-15: finalize report generation and COSMIN-style table exports (markdown/CSV/DOCX)
 - Post-Task 15 hardening:
   - real-paper validation across PROM/PBOM/activity profiles

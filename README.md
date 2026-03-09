@@ -39,6 +39,17 @@ Core foundations are implemented and tested:
   - explicit rule names, inputs used, threshold comparisons, and explanations
   - explicit prerequisite handling with indeterminate output when prerequisites are missing
   - conflicting evidence preserved as inconsistent (not silently resolved)
+- First-pass synthesis:
+  - preserves individual study-level results before summarization
+  - groups by instrument name/version/subscale and measurement property
+  - accumulates total sample size
+  - represents inconsistency without forced resolution
+  - provides subgroup explanation placeholders
+- Modified GRADE (first pass):
+  - starts at `high` certainty and downgrades explicitly
+  - domains: risk of bias, inconsistency, imprecision, indirectness
+  - sample-size-driven imprecision downgrading (`n=50-100` => -1, `n<50` => -2)
+  - each downgrade includes domain, severity, reason, explanation, and evidence IDs
 
 ## Package layout
 
