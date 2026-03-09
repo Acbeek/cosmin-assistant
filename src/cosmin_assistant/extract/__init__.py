@@ -25,8 +25,18 @@ from cosmin_assistant.extract.spans import (
     ParsedMarkdownDocument,
     SentenceRecord,
 )
+from cosmin_assistant.extract.statistics_extractor import (
+    extract_statistics_from_markdown_file,
+    extract_statistics_from_parsed_document,
+)
+from cosmin_assistant.extract.statistics_models import (
+    ArticleStatisticsExtractionResult,
+    StatisticCandidate,
+    StatisticType,
+)
 
 __all__ = [
+    "ArticleStatisticsExtractionResult",
     "ArticleContextExtractionResult",
     "ContextFieldExtraction",
     "ContextValueCandidate",
@@ -36,11 +46,15 @@ __all__ = [
     "ParagraphRecord",
     "ParsedMarkdownDocument",
     "SentenceRecord",
+    "StatisticCandidate",
+    "StatisticType",
     "SpanProvenance",
     "StudyContextExtractionResult",
     "SubsampleExtraction",
     "extract_context_from_markdown_file",
     "extract_context_from_parsed_document",
+    "extract_statistics_from_markdown_file",
+    "extract_statistics_from_parsed_document",
     "parse_markdown_file",
     "parse_markdown_text",
     "read_markdown_file",
