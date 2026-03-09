@@ -34,6 +34,11 @@ Core foundations are implemented and tested:
     - Box 3 Structural validity
     - Box 4 Internal consistency
     - Box 6 Reliability
+- Study-level measurement property rating (deterministic initial set):
+  - separate modules for structural validity, internal consistency, and reliability
+  - explicit rule names, inputs used, threshold comparisons, and explanations
+  - explicit prerequisite handling with indeterminate output when prerequisites are missing
+  - conflicting evidence preserved as inconsistent (not silently resolved)
 
 ## Package layout
 

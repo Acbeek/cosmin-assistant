@@ -64,13 +64,21 @@ This tool is not:
   - Box 3 Structural validity
   - Box 4 Internal consistency
   - Box 6 Reliability
+- Initial deterministic study-level measurement-property rating functions:
+  - Structural validity
+  - Internal consistency
+  - Reliability
+  - explicit output fields for `rule_name`, `inputs_used`, `threshold_comparisons`,
+    `evidence_span_ids`, `computed_rating`, and `explanation`
+  - explicit prerequisite handling (internal consistency requires structural-validity prerequisite)
+  - conflicting evidence returned as `inconsistent` (not auto-resolved)
 
 ### 2) Provisional after Task 10
 
 Planned but still provisional:
 
 - expanded deterministic COSMIN RoB scoring coverage beyond Box 3/4/6
-- first deterministic good-measurement-property rating pass
+- expanded deterministic good-measurement-property rating coverage beyond the initial 3 properties
 - explicit `reviewer_required` hooks where rules are non-deterministic
 
 Treat any post-Task-10 behavior as provisional until validated on real papers and documented in the decision log.
@@ -97,7 +105,7 @@ Planned export workflow (not complete yet):
 - `src/cosmin_assistant/extract/`: markdown parsing, provenance, context/statistics extraction
 - `src/cosmin_assistant/profiles/`: PROM/PBOM/activity profile capability metadata
 - `src/cosmin_assistant/cosmin_rob/`: RoB infrastructure + initial Box 3/4/6 modules
-- `src/cosmin_assistant/measurement_rating/`: rating stage placeholder (future logic)
+- `src/cosmin_assistant/measurement_rating/`: deterministic study-level rating modules (initial set)
 - `src/cosmin_assistant/synthesize/`: synthesis stage placeholder (future logic)
 - `src/cosmin_assistant/grade/`: modified GRADE stage placeholder (future logic)
 - `src/cosmin_assistant/tables/`: table/export stage placeholder (future logic)
@@ -156,6 +164,8 @@ Practical audit checks:
 - every candidate retains raw source text
 - normalized values never replace the raw text record
 - for RoB boxes, `NOT_APPLICABLE` items are explicit and excluded from worst-score-counts
+- for measurement-property ratings, verify `rule_name`, `threshold_comparisons`, and
+  `inputs_used` before accepting computed ratings
 
 ## Single-article workflow
 
@@ -216,6 +226,40 @@ rob_bundle = assess_box6_reliability(
     study_id="study.001",
     instrument_id="inst.001",
     item_inputs=item_inputs,
+)
+```
+
+Current API pattern for initial study-level measurement-property rating:
+
+```python
+from cosmin_assistant.extract import StatisticCandidate, StatisticType
+from cosmin_assistant.measurement_rating import (
+    PrerequisiteDecision,
+    PrerequisiteStatus,
+    REQUIRED_PREREQUISITE_NAME,
+    rate_internal_consistency,
+)
+
+alpha_candidate = StatisticCandidate(
+    id="stat.700",
+    statistic_type=StatisticType.CRONBACH_ALPHA,
+    value_raw="0.84",
+    value_normalized=0.84,
+    evidence_span_ids=("sen.700",),
+    surrounding_text="Cronbach's alpha = 0.84",
+)
+
+result = rate_internal_consistency(
+    study_id="study.700",
+    instrument_id="inst.700",
+    statistic_candidates=(alpha_candidate,),
+    prerequisite_decisions=(
+        PrerequisiteDecision(
+            name=REQUIRED_PREREQUISITE_NAME,
+            status=PrerequisiteStatus.MET,
+            evidence_span_ids=("sen.699",),
+        ),
+    ),
 )
 ```
 
@@ -282,14 +326,14 @@ Until table/export stages are implemented, treat file naming as provisional runb
 - No stable CLI workflow yet.
 - COSMIN RoB coverage is initial, limited to Box 3/4/6 modules.
 - Box-level ratings are deterministic from explicit item ratings; item-rating derivation from raw evidence remains limited and should be reviewer-verified.
-- No completed deterministic measurement-property rating stage yet.
+- Measurement-property rating coverage is initial, currently limited to structural validity, internal consistency, and reliability.
 - No completed synthesis and modified GRADE implementation yet.
 - No final table export layer yet (CSV/DOCX pipeline pending).
 - Extraction is pattern-driven and may miss unusual reporting styles; reviewer verification remains required.
 
 ## Planned roadmap
 
-- Task 8-10: expand deterministic COSMIN RoB coverage and implement first measurement-property rating passes
+- Task 9-10: expand deterministic COSMIN RoB and measurement-property rating coverage beyond the initial modules
 - Task 11-13: add synthesis logic, modified GRADE downgrading, and explicit reviewer decision lifecycle
 - Task 14-15: finalize report generation and COSMIN-style table exports (markdown/CSV/DOCX)
 - Post-Task 15 hardening:
