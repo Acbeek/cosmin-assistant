@@ -6,13 +6,21 @@ import hashlib
 from collections.abc import Iterable
 
 from cosmin_assistant.extract.statistics_models import StatisticCandidate, StatisticType
-from cosmin_assistant.measurement_rating.models import RawResultRecord, ThresholdComparison
+from cosmin_assistant.measurement_rating.models import (
+    PrerequisiteDecision,
+    PrerequisiteStatus,
+    RawResultRecord,
+    ThresholdComparison,
+)
 from cosmin_assistant.models import (
     MeasurementPropertyRating,
+    ProfileType,
     ReviewerDecisionStatus,
     StableId,
     UncertaintyStatus,
 )
+from cosmin_assistant.profiles import get_profile
+from cosmin_assistant.profiles.base import BaseProfile
 
 
 def stable_id(prefix: str, *parts: object) -> StableId:
@@ -88,3 +96,47 @@ def derive_status_from_rating(
         return (UncertaintyStatus.MISSING_EVIDENCE, ReviewerDecisionStatus.PENDING)
 
     return (UncertaintyStatus.CERTAIN, ReviewerDecisionStatus.NOT_REQUIRED)
+
+
+def resolve_profile(profile_type: ProfileType | str) -> tuple[ProfileType, BaseProfile]:
+    """Resolve profile input into enum value and profile metadata instance."""
+
+    resolved_type = ProfileType(profile_type)
+    return resolved_type, get_profile(resolved_type)
+
+
+def resolve_named_prerequisite(
+    *,
+    decisions: tuple[PrerequisiteDecision, ...],
+    name: str,
+    missing_detail: str,
+) -> PrerequisiteDecision:
+    """Resolve one prerequisite decision by name with conflict/missing handling."""
+
+    matches = [decision for decision in decisions if decision.name == name]
+    if not matches:
+        return PrerequisiteDecision(
+            name=name,
+            status=PrerequisiteStatus.MISSING,
+            detail=missing_detail,
+        )
+
+    unique_statuses = {decision.status for decision in matches}
+    if len(unique_statuses) > 1:
+        span_ids = tuple(
+            sorted({span for decision in matches for span in decision.evidence_span_ids})
+        )
+        return PrerequisiteDecision(
+            name=name,
+            status=PrerequisiteStatus.MISSING,
+            detail="Conflicting prerequisite decisions were provided.",
+            evidence_span_ids=span_ids,
+        )
+
+    chosen = matches[0]
+    return PrerequisiteDecision(
+        name=chosen.name,
+        status=chosen.status,
+        detail=chosen.detail,
+        evidence_span_ids=chosen.evidence_span_ids,
+    )
