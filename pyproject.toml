@@ -25,7 +25,7 @@ dev = [
 packages = ["src/cosmin_assistant"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests_scaffold"]
+testpaths = ["tests"]
 pythonpath = ["src"]
 
 [tool.ruff]
