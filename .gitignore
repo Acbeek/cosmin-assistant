@@ -25,3 +25,6 @@ coverage.xml
 
 # Local config
 .gitconfig-personal
+
+# local reference source docs
+references/
