@@ -55,12 +55,21 @@ This tool is not:
   - DIF findings, measurement invariance findings
   - known-groups/comparator results
   - responsiveness-related statistics
+- Initial COSMIN RoB infrastructure:
+  - common item-assessment utilities
+  - common box aggregation utilities
+  - explicit worst-score-counts implementation
+  - explicit `NOT_APPLICABLE` exclusion handling
+- Initial modular COSMIN RoB box assessors:
+  - Box 3 Structural validity
+  - Box 4 Internal consistency
+  - Box 6 Reliability
 
 ### 2) Provisional after Task 10
 
 Planned but still provisional:
 
-- first deterministic COSMIN RoB box scoring pass
+- expanded deterministic COSMIN RoB scoring coverage beyond Box 3/4/6
 - first deterministic good-measurement-property rating pass
 - explicit `reviewer_required` hooks where rules are non-deterministic
 
@@ -87,7 +96,7 @@ Planned export workflow (not complete yet):
 - `src/cosmin_assistant/models/`: typed core enums and entities
 - `src/cosmin_assistant/extract/`: markdown parsing, provenance, context/statistics extraction
 - `src/cosmin_assistant/profiles/`: PROM/PBOM/activity profile capability metadata
-- `src/cosmin_assistant/cosmin_rob/`: RoB stage placeholder (future logic)
+- `src/cosmin_assistant/cosmin_rob/`: RoB infrastructure + initial Box 3/4/6 modules
 - `src/cosmin_assistant/measurement_rating/`: rating stage placeholder (future logic)
 - `src/cosmin_assistant/synthesize/`: synthesis stage placeholder (future logic)
 - `src/cosmin_assistant/grade/`: modified GRADE stage placeholder (future logic)
@@ -146,6 +155,7 @@ Practical audit checks:
 - every extracted context/statistic candidate has at least one evidence span ID
 - every candidate retains raw source text
 - normalized values never replace the raw text record
+- for RoB boxes, `NOT_APPLICABLE` items are explicit and excluded from worst-score-counts
 
 ## Single-article workflow
 
@@ -181,6 +191,32 @@ Placeholder CLI pattern for future tasks:
 ```bash
 # Placeholder only: CLI contract may change before stabilization.
 cosmin-assistant run --input data/article_001.md --profile prom --out runs/run_001/
+```
+
+Current API pattern for initial RoB box assessment:
+
+```python
+from cosmin_assistant.cosmin_rob import (
+    BOX_6_ITEM_CODES,
+    BoxItemInput,
+    assess_box6_reliability,
+)
+from cosmin_assistant.models import CosminItemRating
+
+item_inputs = tuple(
+    BoxItemInput(
+        item_code=item_code,
+        item_rating=CosminItemRating.VERY_GOOD,
+        evidence_span_ids=[f"sen.{idx+1}"],
+    )
+    for idx, item_code in enumerate(BOX_6_ITEM_CODES)
+)
+
+rob_bundle = assess_box6_reliability(
+    study_id="study.001",
+    instrument_id="inst.001",
+    item_inputs=item_inputs,
+)
 ```
 
 ## Reviewer-in-the-loop workflow
@@ -244,7 +280,8 @@ Until table/export stages are implemented, treat file naming as provisional runb
 ## Current limitations
 
 - No stable CLI workflow yet.
-- No completed COSMIN RoB scoring engine yet.
+- COSMIN RoB coverage is initial, limited to Box 3/4/6 modules.
+- Box-level ratings are deterministic from explicit item ratings; item-rating derivation from raw evidence remains limited and should be reviewer-verified.
 - No completed deterministic measurement-property rating stage yet.
 - No completed synthesis and modified GRADE implementation yet.
 - No final table export layer yet (CSV/DOCX pipeline pending).
@@ -252,7 +289,7 @@ Until table/export stages are implemented, treat file naming as provisional runb
 
 ## Planned roadmap
 
-- Task 7-10: add deterministic COSMIN RoB and first measurement-property rating passes
+- Task 8-10: expand deterministic COSMIN RoB coverage and implement first measurement-property rating passes
 - Task 11-13: add synthesis logic, modified GRADE downgrading, and explicit reviewer decision lifecycle
 - Task 14-15: finalize report generation and COSMIN-style table exports (markdown/CSV/DOCX)
 - Post-Task 15 hardening:

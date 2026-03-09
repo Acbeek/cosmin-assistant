@@ -25,6 +25,15 @@ Core foundations are implemented and tested:
   - candidate extraction only (no threshold interpretation)
   - multiple values + subgroup-specific values
   - raw statistic text + normalized type/value + evidence span provenance
+- COSMIN Risk of Bias (initial infrastructure):
+  - shared item-assessment utilities
+  - shared box aggregation utilities
+  - explicit worst-score-counts logic
+  - explicit `NOT_APPLICABLE` exclusion logic
+  - modular initial box assessors:
+    - Box 3 Structural validity
+    - Box 4 Internal consistency
+    - Box 6 Reliability
 
 ## Package layout
 
