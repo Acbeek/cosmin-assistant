@@ -39,6 +39,16 @@ This tool is not:
   - `PromProfile`
   - `PbomProfile`
   - `ActivityMonitorProfile`
+  - explicit capability metadata for:
+    - review steps
+    - COSMIN boxes
+    - deterministic rules
+    - reviewer-required decisions/questions
+    - unsupported areas
+    - profile-specific extraction fields
+    - profile-specific table-column availability
+  - safe-failure helpers for unsupported auto-scoring areas/rules
+  - explicit non-PROM adaptation declaration for COSMIN steps 5-7
 - Markdown parsing and provenance:
   - heading hierarchy/path tracking
   - paragraph/sentence spans
@@ -107,6 +117,7 @@ Still provisional in current CLI orchestration:
 - The single-command end-to-end run remains wired to an initial RoB/rating subset for auto-run output.
 - Additional RoB and rating modules are implemented and tested, but not yet fully integrated into one unified orchestrator flow.
 - Synthesis/GRADE rules are first-pass and should be calibrated on real review datasets.
+- PBOM/activity profiles are deeply specified adapters but remain methodologically partial, not full PROM-equivalent pipelines.
 
 ### 3) Reviewer workflow after Task 13
 
@@ -310,6 +321,7 @@ export_template7_docx(
 
 - End-to-end CLI orchestration is still provisional and PROM-focused.
 - Full module availability is ahead of full run-level integration.
+- PBOM/activity profiles explicitly mark unsupported/reviewer-required areas; this is intentional and reflects conservative adaptation boundaries.
 - Content validity and PROM development remain conservative reviewer-in-the-loop areas.
 - Modified GRADE and synthesis are first-pass deterministic implementations.
 - Template 5/7/8 DOCX exports are implemented, but publication-level styling polish is still pending.

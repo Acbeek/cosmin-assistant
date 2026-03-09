@@ -10,15 +10,22 @@ Deterministic, auditable COSMIN appraisal assistant for parsed article markdown 
 - Final judgments must be traceable to source text spans.
 - Missing or ambiguous evidence remains explicit (`indeterminate` / `reviewer_required`).
 
-## Current implementation status (through Task 15)
+## Current implementation status (through Task 16)
 
 Implemented and tested:
 
 - Typed core enums and Pydantic models for extraction, RoB, ratings, synthesis, GRADE, and reviewer overrides.
 - Profile system with explicit capability declarations:
   - `PromProfile` (fullest current metadata coverage)
-  - `PbomProfile` (partial adapter)
-  - `ActivityMonitorProfile` (partial adapter)
+  - `PbomProfile` (adapted partial adapter with explicit non-PROM limits)
+  - `ActivityMonitorProfile` (adapted partial adapter with explicit non-PROM limits)
+- Deepened non-PROM profile adapter metadata:
+  - explicit step capability matrix (reused/adapted/reviewer_required/unsupported)
+  - explicit box capability matrix
+  - explicit rule capability matrix
+  - profile-specific extraction fields, reviewer questions, and table-column availability
+  - explicit safe-failure helpers for unsupported auto-scoring areas and unavailable rules
+  - explicit adapted handling for non-PROM review steps 5-7
 - Markdown parsing/provenance:
   - heading hierarchy + heading path tracking
   - paragraph/sentence spans with stable IDs
@@ -67,6 +74,7 @@ Important current limitation:
 
 - `cosmin-assess` is still a provisional orchestrator: PROM-only and currently wired to initial RoB/rating subset for end-to-end run output. Additional modules exist and are tested, but not all are yet integrated into the single-command pipeline.
 - Template 5/7/8 DOCX exporters are available through Python APIs; full batch orchestration and final visual-polish parity with publication templates are still pending.
+- PBOM/activity adapters are intentionally conservative and do not claim full PROM-equivalent automation.
 
 ## CLI usage
 
