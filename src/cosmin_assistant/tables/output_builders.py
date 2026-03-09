@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from cosmin_assistant.review import provisional_review_state
 from cosmin_assistant.tables.docx_stub import ProvisionalDocxExporter
 
 if TYPE_CHECKING:
@@ -28,6 +29,9 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
     summary_md_path = out_path / "summary_report.md"
     csv_path = out_path / "per_study_results.csv"
     docx_path = out_path / "summary_report.docx"
+    review_overrides_path = out_path / "review_overrides.json"
+    adjudication_notes_path = out_path / "adjudication_notes.json"
+    review_state_path = out_path / "review_state.json"
 
     evidence_payload = {
         "profile": run.profile_type.value,
@@ -47,6 +51,12 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
         [result.model_dump(mode="json") for result in run.synthesis_results],
     )
     _write_json(grade_path, [result.model_dump(mode="json") for result in run.grade_results])
+    _write_json(review_overrides_path, [])
+    _write_json(adjudication_notes_path, [])
+    _write_json(
+        review_state_path,
+        provisional_review_state(source_output_dir=str(out_path)).model_dump(mode="json"),
+    )
 
     summary_markdown = _build_summary_markdown(run)
     summary_md_path.write_text(summary_markdown, encoding="utf-8")
@@ -66,6 +76,9 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
         "summary_report_md": str(summary_md_path),
         "per_study_csv": str(csv_path),
         "summary_report_docx": str(docx_path),
+        "review_overrides_json": str(review_overrides_path),
+        "adjudication_notes_json": str(adjudication_notes_path),
+        "review_state_json": str(review_state_path),
     }
 
 

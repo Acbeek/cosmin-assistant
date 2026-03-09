@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 cosmin-assess = "cosmin_assistant.cli.app:run"
+cosmin-review = "cosmin_assistant.cli.review_app:run_review"
 
 [project.optional-dependencies]
 dev = [
@@ -54,3 +55,14 @@ mypy_path = "src"
 packages = ["cosmin_assistant"]
 strict = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["pandas", "pandas.*", "yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "cosmin_assistant.review.override_flow",
+  "cosmin_assistant.tables.output_builders",
+]
+disable_error_code = ["import-untyped"]

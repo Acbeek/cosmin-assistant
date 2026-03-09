@@ -2,376 +2,256 @@
 
 ## What this tool is for
 
-`cosmin-assistant` is a deterministic, auditable Python package to support COSMIN-based appraisal from parsed article markdown.
+`cosmin-assistant` supports COSMIN-based appraisal from parsed article markdown with deterministic, auditable processing.
 
-It is designed to help reviewers:
+It is built to help reviewers:
 
-- extract explicit evidence from article text spans
-- keep provenance from text span to derived objects
-- prepare structured inputs for later COSMIN RoB, measurement-property rating, synthesis, and modified GRADE steps
-
-The package is built for reviewer-in-the-loop use, not fully autonomous decision-making.
+- extract explicit evidence only
+- keep evidence-to-judgment traceability
+- run structured COSMIN RoB, study-level rating, synthesis, and modified GRADE steps
+- apply reviewer overrides and adjudication without changing raw evidence
 
 ## What it is not for
 
 This tool is not:
 
-- a black-box replacement for COSMIN-trained reviewers
-- a PDF parser or OCR tool
-- a system that may infer missing evidence
-- a finalized end-to-end COSMIN automation pipeline (yet)
+- a replacement for COSMIN-trained reviewer judgment
+- a PDF/OCR parser
+- a black-box auto-rater that can infer missing evidence
+- a final COSMIN table rendering system (DOCX output is still a stub interface)
 
 ## Scientific scope and limitations
 
 - PROM is the reference implementation.
-- PBOM and activity profiles are adapted implementations and may remain partial.
-- Non-PROM workflows are not assumed equivalent to PROM workflows.
-- Evidence must be explicitly present in source text; no evidence may be invented.
-- Ambiguous, conflicting, or missing evidence must remain explicit (for example `ambiguous`, `reviewer_required`, or `indeterminate` in later stages).
-- Instrument versions and subscales must be treated as separate appraisal units.
+- PBOM and activity-monitor profiles are adapted and may remain partial.
+- Non-PROM rules are not assumed equivalent to PROM rules.
+- No evidence may be invented.
+- All final judgments must be traceable to article text spans.
+- Reviewer confirmation is required for non-deterministic decisions.
+- Instrument versions/subscales must be handled as separate appraisal units.
 
 ## Current implementation status
 
 ### 1) Available now
 
-- Typed core enums and Pydantic entities
-- Profile capability system:
-  - `PromProfile` (broadest coverage metadata)
-  - `PbomProfile` (explicit adaptation limits)
-  - `ActivityMonitorProfile` (explicit adaptation limits)
-- Markdown parsing with provenance:
-  - heading hierarchy
-  - paragraph and sentence spans
+- Typed enums/models for extraction, RoB, measurement ratings, synthesis, modified GRADE, and review overrides.
+- Profile system with explicit capabilities and limits:
+  - `PromProfile`
+  - `PbomProfile`
+  - `ActivityMonitorProfile`
+- Markdown parsing and provenance:
+  - heading hierarchy/path tracking
+  - paragraph/sentence spans
   - stable span IDs
-  - file path + heading path + character and line ranges
-- Context extraction (study/instrument metadata) with:
-  - raw and normalized values
-  - ambiguity preservation
-  - `not_reported` versus `not_detected`
-  - multiple subsamples in one article
-- Statistics candidate extraction with provenance for:
-  - Cronbach alpha, ICC, weighted kappa, SEM, SDC, LoA, MIC
+  - file path + heading path + line/char provenance
+- Context extraction:
+  - instrument name/version/subscale/construct
+  - study design, target population, language, country
+  - sample-size role separation (enrollment/analyzed/limb-level)
+  - follow-up schedule
+  - ambiguity preserved (`detected`/`ambiguous`/`not_reported`/`not_detected`)
+- Instrument and routing hardening for longitudinal PROM outcomes:
+  - stronger PROM instrument detection in methods/results/outcome contexts
+  - suppression of false instrument candidates (devices/calculators/software/hospitals/references)
+  - direct vs background vs interpretability evidence routing
+  - MIC/MCID method labeling (anchor/distribution/reliability-support)
+  - responsiveness candidate detection with hypothesis-status flagging
+  - Potter fixture regression coverage
+- Statistics candidate extraction (no threshold interpretation at extraction stage):
+  - alpha, ICC, weighted kappa, SEM, SDC, LoA, MIC/MCID/MID
   - CFI, TLI, RMSEA, SRMR, AUC, correlations
-  - DIF findings, measurement invariance findings
-  - known-groups/comparator results
-  - responsiveness-related statistics
-- Initial COSMIN RoB infrastructure:
-  - common item-assessment utilities
-  - common box aggregation utilities
-  - explicit worst-score-counts implementation
-  - explicit `NOT_APPLICABLE` exclusion handling
-- Initial modular COSMIN RoB box assessors:
-  - Box 3 Structural validity
-  - Box 4 Internal consistency
-  - Box 6 Reliability
-- Initial deterministic study-level measurement-property rating functions:
-  - Structural validity
-  - Internal consistency
-  - Reliability
-  - explicit output fields for `rule_name`, `inputs_used`, `threshold_comparisons`,
-    `evidence_span_ids`, `computed_rating`, and `explanation`
-  - explicit prerequisite handling (internal consistency requires structural-validity prerequisite)
-  - conflicting evidence returned as `inconsistent` (not auto-resolved)
-- First-pass synthesis:
-  - preserves study-level records before summary
-  - aggregates by instrument name/version/subscale and measurement property
-  - accumulates total sample size
-  - keeps inconsistency explicit (`inconsistent`) without forced resolution
-  - supports subgroup explanation placeholders
-- Modified GRADE first pass:
-  - starts at high certainty and downgrades explicitly
-  - domains: risk of bias, inconsistency, imprecision, indirectness
-  - imprecision uses sample-size rules (`n=50-100` => serious, `n<50` => very serious)
-  - every downgrade stores domain, severity, reason, evidence IDs, and explanation
-- Provisional end-to-end CLI (`cosmin-assess`):
-  - runs one-article deterministic pipeline for PROM profile
-  - exports JSON audit artifacts, markdown summary report, per-study CSV, and DOCX stub
+  - DIF/invariance findings
+  - known-groups/comparator findings
+  - responsiveness-related candidates
+- COSMIN RoB infrastructure and PROM box modules:
+  - worst-score-counts aggregation
+  - explicit NA handling
+  - item-level and box-level outputs separated
+  - modules for boxes 1 through 10
+- Deterministic study-level rating modules:
+  - structural validity
+  - internal consistency
+  - reliability
+  - cross-cultural validity / measurement invariance
+  - measurement error
+  - criterion validity
+  - hypotheses testing for construct validity
+  - responsiveness
+  - each rating includes rule name, inputs, threshold comparisons, evidence IDs, and explanation
+- First-pass synthesis and modified GRADE:
+  - preserves per-study results before summary
+  - explicit inconsistency handling
+  - explicit downgrade records for risk of bias, inconsistency, imprecision, and indirectness
+- Reviewer-in-the-loop flow:
+  - provisional/finalized state
+  - override history (`previous_value`, `overridden_value`, reason, reviewer, timestamp, evidence IDs)
+  - adjudication notes for reviewer-only decisions
+  - pending-review item collection from extraction/RoB/rating/synthesis
 
 ### 2) Provisional after Task 10
 
-Planned but still provisional:
+Still provisional in current CLI orchestration:
 
-- expanded deterministic COSMIN RoB scoring coverage beyond Box 3/4/6
-- expanded deterministic good-measurement-property rating coverage beyond the initial 3 properties
-- expanded synthesis/modified-GRADE coverage and calibration beyond first-pass rules
-- explicit `reviewer_required` hooks where rules are non-deterministic
-
-Treat any post-Task-10 behavior as provisional until validated on real papers and documented in the decision log.
+- `cosmin-assess` is PROM-only at run level.
+- The single-command end-to-end run remains wired to an initial RoB/rating subset for auto-run output.
+- Additional RoB and rating modules are implemented and tested, but not yet fully integrated into one unified orchestrator flow.
+- Synthesis/GRADE rules are first-pass and should be calibrated on real review datasets.
 
 ### 3) Reviewer workflow after Task 13
 
-Planned reviewer workflow (not complete yet):
+Now available:
 
-- explicit reviewer checkpoints before final judgments
-- persisted reviewer overrides with reasons and evidence references
-- conflict-resolution handling for mixed/contradictory study evidence
+- run provisional assessment
+- apply structured overrides/adjudication through `cosmin-review`
+- finalize reviewed outputs with auditable history
+
+Included manual decision key support:
+
+- target-population match
+- comparator suitability
+- adequacy of hypotheses
+- explanation of inconsistency
+- indirectness
+- non-PROM adaptation decisions
+- content-validity judgments
 
 ### 4) Table export workflow after Task 15
 
-Planned export workflow (not complete yet):
+Not complete yet:
 
-- COSMIN-style summary tables in markdown, CSV, and DOCX
-- auditable links from table cells to evidence and scoring rules
-- run-level artifacts suitable for supplementary files
+- markdown/CSV exports are available
+- DOCX export remains a clean stub interface
+- final COSMIN-style table templates and final DOCX layout are still pending
 
 ## Repository structure
 
-- `src/cosmin_assistant/models/`: typed core enums and entities
-- `src/cosmin_assistant/extract/`: markdown parsing, provenance, context/statistics extraction
-- `src/cosmin_assistant/profiles/`: PROM/PBOM/activity profile capability metadata
-- `src/cosmin_assistant/cosmin_rob/`: RoB infrastructure + initial Box 3/4/6 modules
-- `src/cosmin_assistant/measurement_rating/`: deterministic study-level rating modules (initial set)
-- `src/cosmin_assistant/synthesize/`: first-pass synthesis models and aggregation
-- `src/cosmin_assistant/grade/`: modified GRADE first-pass models and downgrading
-- `src/cosmin_assistant/tables/`: provisional output builders (JSON/MD/CSV + DOCX stub)
-- `tests/`: pytest suite with fixtures
-- `docs/`: method scope and implementation docs
+- `src/cosmin_assistant/models/`: typed core models/enums
+- `src/cosmin_assistant/extract/`: parser, provenance, context/statistics extraction
+- `src/cosmin_assistant/profiles/`: PROM/PBOM/activity profile adapters
+- `src/cosmin_assistant/cosmin_rob/`: RoB item/box infrastructure and box modules
+- `src/cosmin_assistant/measurement_rating/`: deterministic study-level rating modules
+- `src/cosmin_assistant/synthesize/`: first-pass synthesis
+- `src/cosmin_assistant/grade/`: modified GRADE
+- `src/cosmin_assistant/review/`: override/adjudication flow
+- `src/cosmin_assistant/tables/`: JSON/MD/CSV builders + DOCX stub
+- `src/cosmin_assistant/cli/`: assessment and review CLIs
+- `tests/`: fixtures + regression tests
 
 ## Installation
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+python -m pip install -U pip
+python -m pip install -e ".[dev]"
 ```
 
-Notes:
-
-- Python 3.11+ is required.
-- Apple Silicon macOS is supported.
+If `python3.11` is not available, use any installed Python binary `>=3.11`.
 
 ## Running tests
 
 ```bash
-python3 -m ruff check .
-python3 -m black --check .
-python3 -m mypy
-python3 -m pytest -q
+ruff check src tests
+black --check src tests
+mypy src
+pytest -q
 ```
 
 ## Expected input files
 
-Current expected input is one or more parsed article markdown files (`.md`), typically one study report per file.
+Input is parsed markdown (`.md`) from outcome-measurement study reports.
 
-Recommended markdown conventions:
+Recommended formatting:
 
-- use heading levels (`#`, `##`, `###`) to preserve section hierarchy
-- keep paragraph text intact (avoid aggressive manual truncation)
-- keep study statistics in plain text (not only images/tables outside text)
-
-Current parser behavior:
-
-- parses headings, paragraphs, and sentence spans
-- preserves exact provenance for each span
-- does not perform semantic interpretation beyond extraction candidates
+- preserve heading hierarchy (`#`, `##`, `###`)
+- keep report text intact (avoid heavy manual compression)
+- keep statistical statements in text where possible
 
 ## Evidence traceability principles
 
-Every downstream judgment must be traceable through:
+Audit chain:
 
-`article text span -> extracted evidence object -> deterministic rule -> output cell`
+`article text span -> extracted evidence object -> scoring/routing rule -> output artifact cell`
 
-Current implementation already supports the first two links via stable span IDs and provenance metadata. Later tasks will complete rule and output-cell linkage.
+Reviewer checks before accepting outputs:
 
-Practical audit checks:
-
-- every extracted context/statistic candidate has at least one evidence span ID
-- every candidate retains raw source text
-- normalized values never replace the raw text record
-- for RoB boxes, `NOT_APPLICABLE` items are explicit and excluded from worst-score-counts
-- for measurement-property ratings, verify `rule_name`, `threshold_comparisons`, and
-  `inputs_used` before accepting computed ratings
+- each extracted item has evidence span IDs
+- raw source text is retained
+- normalized values do not replace raw evidence
+- RoB aggregation uses explicit worst-score-counts + NA rules
+- measurement ratings expose rule name, prerequisites, thresholds, and inputs
+- reviewed outputs preserve override history without mutating raw evidence
 
 ## Single-article workflow
 
-Use the provisional CLI now:
+Run provisional assessment:
 
 ```bash
-cosmin-assess article.md --profile prom --out results/
+cosmin-assess /path/to/article.md --profile prom --out results/run1
 ```
 
-Current CLI behavior:
+Current `cosmin-assess` behavior:
 
-- runs one-article pipeline:
-  - parse -> extract -> provisional RoB -> provisional measurement rating ->
-    provisional synthesis -> provisional GRADE -> export
-- supports PROM (`--profile prom`) in this provisional stage
-- writes all core output artifacts to the selected output directory
-
-Equivalent Python API pattern:
-
-```python
-from pathlib import Path
-
-from cosmin_assistant.extract import (
-    extract_context_from_markdown_file,
-    extract_statistics_from_markdown_file,
-)
-
-article_path = "data/article_001.md"
-run_dir = Path("runs/run_001")
-run_dir.mkdir(parents=True, exist_ok=True)
-
-context = extract_context_from_markdown_file(article_path)
-stats = extract_statistics_from_markdown_file(article_path)
-
-(run_dir / "context_extraction.json").write_text(
-    context.model_dump_json(indent=2),
-    encoding="utf-8",
-)
-(run_dir / "statistics_extraction.json").write_text(
-    stats.model_dump_json(indent=2),
-    encoding="utf-8",
-)
-```
-
-Current API pattern for initial RoB box assessment:
-
-```python
-from cosmin_assistant.cosmin_rob import (
-    BOX_6_ITEM_CODES,
-    BoxItemInput,
-    assess_box6_reliability,
-)
-from cosmin_assistant.models import CosminItemRating
-
-item_inputs = tuple(
-    BoxItemInput(
-        item_code=item_code,
-        item_rating=CosminItemRating.VERY_GOOD,
-        evidence_span_ids=[f"sen.{idx+1}"],
-    )
-    for idx, item_code in enumerate(BOX_6_ITEM_CODES)
-)
-
-rob_bundle = assess_box6_reliability(
-    study_id="study.001",
-    instrument_id="inst.001",
-    item_inputs=item_inputs,
-)
-```
-
-Current API pattern for initial study-level measurement-property rating:
-
-```python
-from cosmin_assistant.extract import StatisticCandidate, StatisticType
-from cosmin_assistant.measurement_rating import (
-    PrerequisiteDecision,
-    PrerequisiteStatus,
-    REQUIRED_PREREQUISITE_NAME,
-    rate_internal_consistency,
-)
-
-alpha_candidate = StatisticCandidate(
-    id="stat.700",
-    statistic_type=StatisticType.CRONBACH_ALPHA,
-    value_raw="0.84",
-    value_normalized=0.84,
-    evidence_span_ids=("sen.700",),
-    surrounding_text="Cronbach's alpha = 0.84",
-)
-
-result = rate_internal_consistency(
-    study_id="study.700",
-    instrument_id="inst.700",
-    statistic_candidates=(alpha_candidate,),
-    prerequisite_decisions=(
-        PrerequisiteDecision(
-            name=REQUIRED_PREREQUISITE_NAME,
-            status=PrerequisiteStatus.MET,
-            evidence_span_ids=("sen.699",),
-        ),
-    ),
-)
-```
-
-Current API pattern for first-pass synthesis and modified GRADE:
-
-```python
-from cosmin_assistant.grade import (
-    DomainDowngradeInput,
-    DowngradeSeverity,
-    ModifiedGradeDomain,
-    apply_modified_grade,
-)
-from cosmin_assistant.models import MeasurementPropertyRating
-from cosmin_assistant.synthesize import StudySynthesisInput, synthesize_first_pass
-
-study_results = (
-    StudySynthesisInput(
-        id="mpr.800",
-        study_id="study.800",
-        instrument_name="PROM-X",
-        instrument_version="v1",
-        subscale="total",
-        measurement_property="reliability",
-        rating=MeasurementPropertyRating.SUFFICIENT,
-        sample_size=88,
-        evidence_span_ids=("sen.800",),
-    ),
-)
-
-synthesis = synthesize_first_pass(study_results)[0]
-grade = apply_modified_grade(
-    synthesis_result=synthesis,
-    risk_of_bias=DomainDowngradeInput(
-        domain=ModifiedGradeDomain.RISK_OF_BIAS,
-        severity=DowngradeSeverity.SERIOUS,
-        reason="Most studies had doubtful methods.",
-        evidence_span_ids=("sen.800",),
-        explanation="Downgraded one level for risk of bias.",
-    ),
-    indirectness=DomainDowngradeInput(
-        domain=ModifiedGradeDomain.INDIRECTNESS,
-        severity=DowngradeSeverity.NONE,
-        reason=None,
-        evidence_span_ids=(),
-        explanation=None,
-    ),
-)
-```
+- parse -> extract -> provisional RoB subset -> provisional rating subset -> first-pass synthesis/GRADE -> export
+- currently PROM-only for CLI orchestration
 
 ## Reviewer-in-the-loop workflow
 
-Current practical workflow:
+1. Generate provisional output:
 
-1. Parse and extract context/statistics candidates.
-2. Inspect candidate values with provenance spans.
-3. Mark ambiguous/conflicting items for reviewer confirmation.
-4. Keep reviewer notes external (for now) and preserve span references.
+```bash
+cosmin-assess /path/to/article.md --profile prom --out results/run1
+```
 
-Planned workflow after Task 13:
+2. Create review request file (YAML or JSON):
 
-1. deterministic draft judgments are generated
-2. reviewer confirms/overrides explicitly
-3. override rationale and evidence references are stored with the output artifacts
+```yaml
+overrides:
+  - target_object_type: measurement_property_result
+    target_object_id: mpr.example
+    field_name: computed_rating
+    overridden_value: "?"
+    reason: conflicting evidence unresolved
+    reviewer_id: reviewer.01
+    evidence_span_ids: [sen.101]
+adjudication_notes:
+  - decision_key: explanation_of_inconsistency
+    decision_value: subgroup_mix_explains_difference
+    reason: heterogeneity across prosthesis subgroups
+    reviewer_id: reviewer.01
+    evidence_span_ids: [sen.101]
+```
+
+3. Apply review and finalize:
+
+```bash
+cosmin-review results/run1 --review-file review_request.yaml --out results/run1_final --finalize
+```
+
+Use `--keep-provisional` if you want a reviewed-but-not-finalized output set.
 
 ## Output files
 
-Status as of current stage:
+Generated by `cosmin-assess`:
 
-- available now:
-  - `evidence.json`
-  - `rob_assessment.json`
-  - `measurement_property_results.json`
-  - `synthesis.json`
-  - `grade.json`
-  - `summary_report.md`
-  - one per-study CSV export
-  - DOCX export stub interface and provisional output
+- `evidence.json`
+- `rob_assessment.json`
+- `measurement_property_results.json`
+- `synthesis.json`
+- `grade.json`
+- `summary_report.md`
+- `per_study_results.csv`
+- `summary_report.docx` (stub)
+- `review_overrides.json` (empty at first)
+- `adjudication_notes.json` (empty at first)
+- `review_state.json` (provisional)
 
-Planned refinements:
+Updated by `cosmin-review`:
 
-1. `evidence.json`
-2. `rob_assessment.json`
-3. `measurement_property_results.json`
-4. `synthesis.json`
-5. `grade.json`
-6. `summary_report.md`
-7. CSV exports
-8. DOCX exports
-
-File names and schemas are provisional and expected to evolve with later table-template work.
+- same artifacts with applied overrides/adjudication
+- reviewed summary markdown
+- non-empty override/adjudication history when used
+- `review_state.json` set to finalized/provisional according to flag
 
 ## Best practices
 
@@ -386,29 +266,26 @@ File names and schemas are provisional and expected to evolve with later table-t
 
 ## Common mistakes
 
-- collapsing multiple instrument versions into one record
-- mixing subscale evidence into total-score judgments
-- assuming missing text implies negative findings
-- converting extracted candidate statistics directly into COSMIN pass/fail conclusions
-- ignoring conflicting values reported in different sections of the same paper
-- skipping provenance checks before reviewer decisions
+- treating cited background validation studies as current-study evidence
+- promoting device/system names to instrument contexts
+- merging enrollment/analyzed/limb counts into one unlabeled number
+- collapsing conflicting evidence into a single confident judgment
+- accepting ratings without checking prerequisites and evidence IDs
+- overriding derived outputs without recording adjudication reason/evidence
 
 ## Current limitations
 
-- CLI is provisional and currently PROM-focused.
-- COSMIN RoB coverage is initial, limited to Box 3/4/6 modules.
-- Box-level ratings are deterministic from explicit item ratings; item-rating derivation from raw evidence remains limited and should be reviewer-verified.
-- Measurement-property rating coverage is initial, currently limited to structural validity, internal consistency, and reliability.
-- Synthesis and modified GRADE are first-pass implementations and should be calibrated against real review datasets.
-- DOCX export is a clean stub interface, not final COSMIN template rendering.
-- Extraction is pattern-driven and may miss unusual reporting styles; reviewer verification remains required.
+- End-to-end CLI orchestration is still provisional and PROM-focused.
+- Full module availability is ahead of full run-level integration.
+- Content validity and PROM development remain conservative reviewer-in-the-loop areas.
+- Modified GRADE and synthesis are first-pass deterministic implementations.
+- DOCX output is not final COSMIN table-template rendering.
+- Pattern-based extraction may miss uncommon reporting styles; reviewer verification remains required.
 
 ## Planned roadmap
 
-- Task 10: expand deterministic COSMIN RoB, measurement-property rating, synthesis, and modified-GRADE coverage beyond first-pass rules
-- Task 11-13: extend synthesis and modified-GRADE logic and add explicit reviewer decision lifecycle
-- Task 14-15: finalize report generation and COSMIN-style table exports (markdown/CSV/DOCX)
-- Post-Task 15 hardening:
-  - real-paper validation across PROM/PBOM/activity profiles
-  - rule documentation and calibration updates
-  - reproducibility and audit refinements for publication workflows
+- integrate remaining implemented RoB/rating modules into a broader orchestrated CLI pipeline
+- improve profile-aware routing for PBOM/activity adapter paths
+- extend synthesis/GRADE calibration against real review datasets
+- implement final COSMIN-style table templates and DOCX layout
+- perform larger real-paper validation with documented decision-log updates
