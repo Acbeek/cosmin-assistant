@@ -87,6 +87,11 @@ This tool is not:
   - override history (`previous_value`, `overridden_value`, reason, reviewer, timestamp, evidence IDs)
   - adjudication notes for reviewer-only decisions
   - pending-review item collection from extraction/RoB/rating/synthesis
+- Structured table-builder layer:
+  - Template 5 equivalent intermediate table object
+  - Template 7 equivalent intermediate table object
+  - Template 8 equivalent intermediate table object
+  - deterministic CSV/JSON-ready conversion helpers
 
 ### 2) Provisional after Task 10
 
@@ -117,11 +122,12 @@ Included manual decision key support:
 
 ### 4) Table export workflow after Task 15
 
-Not complete yet:
+Current state:
 
+- intermediate Template 5/7/8 table builders are available now
 - markdown/CSV exports are available
 - DOCX export remains a clean stub interface
-- final COSMIN-style table templates and final DOCX layout are still pending
+- final COSMIN-style template layout and polished DOCX formatting are still pending
 
 ## Repository structure
 
@@ -133,7 +139,7 @@ Not complete yet:
 - `src/cosmin_assistant/synthesize/`: first-pass synthesis
 - `src/cosmin_assistant/grade/`: modified GRADE
 - `src/cosmin_assistant/review/`: override/adjudication flow
-- `src/cosmin_assistant/tables/`: JSON/MD/CSV builders + DOCX stub
+- `src/cosmin_assistant/tables/`: JSON/MD/CSV builders + Template 5/7/8 intermediate table builders + DOCX stub
 - `src/cosmin_assistant/cli/`: assessment and review CLIs
 - `tests/`: fixtures + regression tests
 
@@ -253,6 +259,12 @@ Updated by `cosmin-review`:
 - non-empty override/adjudication history when used
 - `review_state.json` set to finalized/provisional according to flag
 
+Available through Python API (not fully CLI-wired yet):
+
+- Template 5 equivalent table object + CSV/JSON-ready conversion
+- Template 7 equivalent table object + CSV/JSON-ready conversion
+- Template 8 equivalent table object + CSV/JSON-ready conversion
+
 ## Best practices
 
 - PROM is the reference implementation.
@@ -279,6 +291,7 @@ Updated by `cosmin-review`:
 - Full module availability is ahead of full run-level integration.
 - Content validity and PROM development remain conservative reviewer-in-the-loop areas.
 - Modified GRADE and synthesis are first-pass deterministic implementations.
+- Template 5/7/8 intermediate table objects are implemented, but polished DOCX template rendering is pending.
 - DOCX output is not final COSMIN table-template rendering.
 - Pattern-based extraction may miss uncommon reporting styles; reviewer verification remains required.
 
@@ -287,5 +300,5 @@ Updated by `cosmin-review`:
 - integrate remaining implemented RoB/rating modules into a broader orchestrated CLI pipeline
 - improve profile-aware routing for PBOM/activity adapter paths
 - extend synthesis/GRADE calibration against real review datasets
-- implement final COSMIN-style table templates and DOCX layout
+- wire Template 5/7/8 builders into richer CLI exports and implement final COSMIN-style DOCX templates
 - perform larger real-paper validation with documented decision-log updates

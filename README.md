@@ -10,7 +10,7 @@ Deterministic, auditable COSMIN appraisal assistant for parsed article markdown 
 - Final judgments must be traceable to source text spans.
 - Missing or ambiguous evidence remains explicit (`indeterminate` / `reviewer_required`).
 
-## Current implementation status (through Task 13)
+## Current implementation status (through Task 14)
 
 Implemented and tested:
 
@@ -51,10 +51,16 @@ Implemented and tested:
   - provisional vs finalized output states
   - auditable override history and adjudication notes
   - reviewer-required item collection from extraction/RoB/rating/synthesis
+- Structured COSMIN-style table builders (intermediate layer):
+  - Template 5 equivalent (study characteristics for other properties)
+  - Template 7 equivalent (per-study + summary rows with certainty)
+  - Template 8 equivalent (summary-of-findings by PROM/version/subscale)
+  - CSV/JSON-ready outputs via deterministic table objects and pandas converters
 
 Important current limitation:
 
 - `cosmin-assess` is still a provisional orchestrator: PROM-only and currently wired to initial RoB/rating subset for end-to-end run output. Additional modules exist and are tested, but not all are yet integrated into the single-command pipeline.
+- Table builders are available through Python APIs; polished DOCX table formatting is intentionally deferred.
 
 ## CLI usage
 
@@ -106,6 +112,8 @@ Assessment run outputs:
 - `review_state.json` (provisional state)
 
 Reviewed/finalized run outputs include the same files with updated review metadata and histories.
+
+Table-builder outputs are currently API-driven (intermediate objects + CSV/JSON conversion), not yet fully wired into polished DOCX templates.
 
 ## Installation
 
