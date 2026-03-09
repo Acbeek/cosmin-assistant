@@ -1,6 +1,12 @@
 """Output builders and export interfaces."""
 
 from cosmin_assistant.tables.docx_stub import DocxExporter, ProvisionalDocxExporter
+from cosmin_assistant.tables.docx_tables import (
+    CosminTableDocxExporter,
+    export_template5_docx,
+    export_template7_docx,
+    export_template8_docx,
+)
 from cosmin_assistant.tables.intermediate_models import (
     TableLegendEntry,
     Template5CharacteristicsRow,
@@ -24,6 +30,7 @@ from cosmin_assistant.tables.table_builders import (
 
 __all__ = [
     "DocxExporter",
+    "CosminTableDocxExporter",
     "ProvisionalDocxExporter",
     "TableLegendEntry",
     "Template5CharacteristicsRow",
@@ -36,6 +43,9 @@ __all__ = [
     "build_template5_characteristics_table",
     "build_template7_evidence_table",
     "build_template8_summary_table",
+    "export_template5_docx",
+    "export_template7_docx",
+    "export_template8_docx",
     "export_run_outputs",
     "table_to_json_ready",
     "template5_to_dataframe",

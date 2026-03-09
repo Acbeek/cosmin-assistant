@@ -10,7 +10,7 @@ Deterministic, auditable COSMIN appraisal assistant for parsed article markdown 
 - Final judgments must be traceable to source text spans.
 - Missing or ambiguous evidence remains explicit (`indeterminate` / `reviewer_required`).
 
-## Current implementation status (through Task 14)
+## Current implementation status (through Task 15)
 
 Implemented and tested:
 
@@ -56,11 +56,17 @@ Implemented and tested:
   - Template 7 equivalent (per-study + summary rows with certainty)
   - Template 8 equivalent (summary-of-findings by PROM/version/subscale)
   - CSV/JSON-ready outputs via deterministic table objects and pandas converters
+- DOCX export for Template 5/7/8 style tables:
+  - consumes intermediate table objects (not raw extraction objects)
+  - preserves per-study rows and summary rows
+  - preserves version/subscale separation and multi-study grouping
+  - includes repeated header row flag, legends/footnotes, light shading, and numeric alignment
+  - covered by structural tests for column order, grouping, and legend presence
 
 Important current limitation:
 
 - `cosmin-assess` is still a provisional orchestrator: PROM-only and currently wired to initial RoB/rating subset for end-to-end run output. Additional modules exist and are tested, but not all are yet integrated into the single-command pipeline.
-- Table builders are available through Python APIs; polished DOCX table formatting is intentionally deferred.
+- Template 5/7/8 DOCX exporters are available through Python APIs; full batch orchestration and final visual-polish parity with publication templates are still pending.
 
 ## CLI usage
 
@@ -114,6 +120,8 @@ Assessment run outputs:
 Reviewed/finalized run outputs include the same files with updated review metadata and histories.
 
 Table-builder outputs are currently API-driven (intermediate objects + CSV/JSON conversion), not yet fully wired into polished DOCX templates.
+
+Template DOCX exports are now available via API entry points (`export_template5_docx`, `export_template7_docx`, `export_template8_docx`).
 
 ## Installation
 

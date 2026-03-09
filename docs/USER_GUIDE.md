@@ -18,7 +18,7 @@ This tool is not:
 - a replacement for COSMIN-trained reviewer judgment
 - a PDF/OCR parser
 - a black-box auto-rater that can infer missing evidence
-- a final COSMIN table rendering system (DOCX output is still a stub interface)
+- a fully polished publication-template renderer with automated batch layout decisions
 
 ## Scientific scope and limitations
 
@@ -92,6 +92,12 @@ This tool is not:
   - Template 7 equivalent intermediate table object
   - Template 8 equivalent intermediate table object
   - deterministic CSV/JSON-ready conversion helpers
+- DOCX table export layer:
+  - Template 5/7/8 style DOCX export from intermediate table objects
+  - repeated header-row flag for page breaks where feasible
+  - light shading and alignment conventions (text left, numeric fields right)
+  - legend/footnote paragraphs appended below tables
+  - structural tests for column order, row grouping, and legend presence
 
 ### 2) Provisional after Task 10
 
@@ -126,8 +132,9 @@ Current state:
 
 - intermediate Template 5/7/8 table builders are available now
 - markdown/CSV exports are available
-- DOCX export remains a clean stub interface
-- final COSMIN-style template layout and polished DOCX formatting are still pending
+- Template 5/7/8 style DOCX export is implemented
+- summary report DOCX remains a separate provisional stub
+- final publication-level visual polishing and batch orchestration are still pending
 
 ## Repository structure
 
@@ -139,7 +146,7 @@ Current state:
 - `src/cosmin_assistant/synthesize/`: first-pass synthesis
 - `src/cosmin_assistant/grade/`: modified GRADE
 - `src/cosmin_assistant/review/`: override/adjudication flow
-- `src/cosmin_assistant/tables/`: JSON/MD/CSV builders + Template 5/7/8 intermediate table builders + DOCX stub
+- `src/cosmin_assistant/tables/`: JSON/MD/CSV builders + Template 5/7/8 intermediate builders + Template 5/7/8 DOCX exporters + summary DOCX stub
 - `src/cosmin_assistant/cli/`: assessment and review CLIs
 - `tests/`: fixtures + regression tests
 
@@ -264,6 +271,20 @@ Available through Python API (not fully CLI-wired yet):
 - Template 5 equivalent table object + CSV/JSON-ready conversion
 - Template 7 equivalent table object + CSV/JSON-ready conversion
 - Template 8 equivalent table object + CSV/JSON-ready conversion
+- Template 5 DOCX export from intermediate table object
+- Template 7 DOCX export from intermediate table object
+- Template 8 DOCX export from intermediate table object
+
+Example (API-level export):
+
+```python
+from cosmin_assistant.tables import export_template7_docx
+
+export_template7_docx(
+    table=template7_table_object,
+    output_path="results/template7.docx",
+)
+```
 
 ## Best practices
 
@@ -291,8 +312,8 @@ Available through Python API (not fully CLI-wired yet):
 - Full module availability is ahead of full run-level integration.
 - Content validity and PROM development remain conservative reviewer-in-the-loop areas.
 - Modified GRADE and synthesis are first-pass deterministic implementations.
-- Template 5/7/8 intermediate table objects are implemented, but polished DOCX template rendering is pending.
-- DOCX output is not final COSMIN table-template rendering.
+- Template 5/7/8 DOCX exports are implemented, but publication-level styling polish is still pending.
+- Batch orchestration for multi-table DOCX runs is not implemented in this task.
 - Pattern-based extraction may miss uncommon reporting styles; reviewer verification remains required.
 
 ## Planned roadmap
@@ -300,5 +321,5 @@ Available through Python API (not fully CLI-wired yet):
 - integrate remaining implemented RoB/rating modules into a broader orchestrated CLI pipeline
 - improve profile-aware routing for PBOM/activity adapter paths
 - extend synthesis/GRADE calibration against real review datasets
-- wire Template 5/7/8 builders into richer CLI exports and implement final COSMIN-style DOCX templates
+- wire Template 5/7/8 builders/exporters into richer CLI flows and refine final COSMIN-style DOCX layout
 - perform larger real-paper validation with documented decision-log updates
