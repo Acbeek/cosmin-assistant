@@ -45,7 +45,10 @@ def rate_internal_consistency(
     - Cronbach alpha is sufficient when 0.70 <= alpha <= 0.95.
     """
 
-    relevant = select_statistics(statistic_candidates, (StatisticType.CRONBACH_ALPHA,))
+    relevant = select_statistics(
+        statistic_candidates,
+        (StatisticType.CRONBACH_ALPHA, StatisticType.KR20),
+    )
     raw_results = to_raw_result_records(relevant)
     comparisons = _build_comparisons(relevant)
     prerequisite = _resolve_required_prerequisite(prerequisite_decisions)
@@ -76,7 +79,10 @@ def rate_internal_consistency(
         computed_rating=rating,
         explanation=explanation,
         inputs_used={
-            "statistic_types_considered": [StatisticType.CRONBACH_ALPHA.value],
+            "statistic_types_considered": [
+                StatisticType.CRONBACH_ALPHA.value,
+                StatisticType.KR20.value,
+            ],
             "threshold": _ALPHA_THRESHOLD_EXPRESSION,
             "required_prerequisite": REQUIRED_PREREQUISITE_NAME,
             "prerequisite_status": prerequisite.status.value,
@@ -106,7 +112,7 @@ def _build_comparisons(
             note: str | None = None
         else:
             outcome = ThresholdComparisonOutcome.NOT_EVALUABLE
-            note = "normalized Cronbach alpha is not numeric"
+            note = "normalized alpha/KR-20 statistic is not numeric"
 
         comparisons.append(
             ThresholdComparison(
@@ -185,7 +191,7 @@ def _compute_rating(
     if not comparisons:
         return (
             MeasurementPropertyRating.INDETERMINATE,
-            "No Cronbach alpha statistics were available for internal consistency rating.",
+            "No alpha/KR-20 statistics were available for internal consistency rating.",
             UncertaintyStatus.MISSING_EVIDENCE,
             ReviewerDecisionStatus.PENDING,
         )
@@ -212,7 +218,7 @@ def _compute_rating(
     if meets and not fails:
         return (
             MeasurementPropertyRating.SUFFICIENT,
-            "All evaluable Cronbach alpha values met deterministic thresholds.",
+            "All evaluable alpha/KR-20 values met deterministic thresholds.",
             UncertaintyStatus.CERTAIN,
             ReviewerDecisionStatus.NOT_REQUIRED,
         )
@@ -220,14 +226,14 @@ def _compute_rating(
     if fails and not meets:
         return (
             MeasurementPropertyRating.INSUFFICIENT,
-            "All evaluable Cronbach alpha values failed deterministic thresholds.",
+            "All evaluable alpha/KR-20 values failed deterministic thresholds.",
             UncertaintyStatus.CERTAIN,
             ReviewerDecisionStatus.NOT_REQUIRED,
         )
 
     return (
         MeasurementPropertyRating.INDETERMINATE,
-        "Cronbach alpha values were present but not evaluable against thresholds.",
+        "Alpha/KR-20 values were present but not evaluable against thresholds.",
         UncertaintyStatus.AMBIGUOUS,
         ReviewerDecisionStatus.PENDING,
     )

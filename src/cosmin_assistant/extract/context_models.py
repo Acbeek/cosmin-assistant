@@ -8,6 +8,7 @@ from typing import Annotated
 from pydantic import Field, model_validator
 
 from cosmin_assistant.models.base import ModelBase, NonEmptyText, StableId
+from cosmin_assistant.models.enums import InstrumentType
 
 
 class FieldDetectionStatus(StrEnum):
@@ -69,9 +70,32 @@ class SampleSizeRole(StrEnum):
     """Role label for extracted sample-size values."""
 
     ENROLLMENT = "enrollment"
+    VALIDATION = "validation"
+    PILOT = "pilot"
+    RETEST = "retest"
     ANALYZED = "analyzed"
     LIMB_LEVEL = "limb_level"
     OTHER = "other"
+
+
+class InstrumentContextRole(StrEnum):
+    """Role of an extracted instrument in the current article context."""
+
+    TARGET_UNDER_APPRAISAL = "target_under_appraisal"
+    CO_PRIMARY_OUTCOME_INSTRUMENT = "co_primary_outcome_instrument"
+    SECONDARY_OUTCOME_INSTRUMENT = "secondary_outcome_instrument"
+    COMPARATOR_ONLY = "comparator_only"
+    BACKGROUND_ONLY = "background_only"
+    COMPARATOR = "comparator"
+    ADDITIONAL = "additional"
+
+
+class StudyIntent(StrEnum):
+    """High-level study-intent classification used for instrument-role routing."""
+
+    PSYCHOMETRIC_VALIDATION = "psychometric_validation_appraisal_study"
+    LONGITUDINAL_OUTCOME = "longitudinal_outcome_study"
+    MIXED = "mixed_study"
 
 
 class SampleSizeObservation(ModelBase):
@@ -94,17 +118,26 @@ class StudyContextExtractionResult(ModelBase):
     study_design: ContextFieldExtraction
     sample_sizes: ContextFieldExtraction
     sample_size_observations: tuple[SampleSizeObservation, ...] = ()
+    validation_sample_n: ContextFieldExtraction | None = None
+    pilot_sample_n: ContextFieldExtraction | None = None
+    retest_sample_n: ContextFieldExtraction | None = None
     follow_up_schedule: ContextFieldExtraction
+    follow_up_interval: ContextFieldExtraction | None = None
     construct_field: ContextFieldExtraction = Field(
         validation_alias="construct",
         serialization_alias="construct",
     )
     target_population: ContextFieldExtraction
+    recruitment_setting: ContextFieldExtraction | None = None
     language: ContextFieldExtraction
     country: ContextFieldExtraction
     measurement_properties_mentioned: ContextFieldExtraction
     measurement_properties_background: ContextFieldExtraction
     measurement_properties_interpretability: ContextFieldExtraction
+    measurement_properties_not_assessed: ContextFieldExtraction | None = None
+    study_intent: StudyIntent = StudyIntent.MIXED
+    study_intent_rationale: str | None = None
+    study_intent_evidence_span_ids: tuple[StableId, ...] = ()
     subsamples: tuple[SubsampleExtraction, ...] = ()
 
 
@@ -123,6 +156,12 @@ class InstrumentContextExtractionResult(ModelBase):
         serialization_alias="construct",
     )
     target_population: ContextFieldExtraction
+    instrument_type: InstrumentType = InstrumentType.MIXED_OR_UNKNOWN
+    instrument_type_rationale: str | None = None
+    instrument_type_evidence_span_ids: tuple[StableId, ...] = ()
+    instrument_role: InstrumentContextRole = InstrumentContextRole.ADDITIONAL
+    role_rationale: str | None = None
+    role_evidence_span_ids: tuple[StableId, ...] = ()
 
 
 class ArticleContextExtractionResult(ModelBase):
@@ -133,3 +172,5 @@ class ArticleContextExtractionResult(ModelBase):
     file_path: NonEmptyText
     study_contexts: tuple[StudyContextExtractionResult, ...]
     instrument_contexts: tuple[InstrumentContextExtractionResult, ...]
+    target_instrument_id: StableId | None = None
+    comparator_instrument_ids: tuple[StableId, ...] = ()

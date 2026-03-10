@@ -719,7 +719,8 @@ def _build_review_summary_markdown(
     for result in measurement_payload:
         lines.append(
             f"- `{result.get('measurement_property')}`: `{result.get('computed_rating')}` "
-            f"(rule `{result.get('rule_name')}`)"
+            f"(rule `{result.get('rule_name')}`; "
+            f"activation_status=`{result.get('activation_status')}`)"
         )
 
     lines.append("")
@@ -727,12 +728,20 @@ def _build_review_summary_markdown(
     for result in synthesis_payload:
         lines.append(
             f"- `{result.get('measurement_property')}`: `{result.get('summary_rating')}` "
-            f"(total_n={result.get('total_sample_size')})"
+            f"(total_n={result.get('total_sample_size')}; "
+            f"activation_status=`{result.get('activation_status')}`)"
         )
 
     lines.append("")
     lines.append("## Modified GRADE")
     for result in grade_payload:
+        if not bool(result.get("grade_executed", True)):
+            lines.append(
+                f"- `{result.get('measurement_property')}`: `not_graded` "
+                f"(activation_status=`{result.get('activation_status')}`; "
+                f"reason={result.get('explanation')})"
+            )
+            continue
         lines.append(
             f"- `{result.get('measurement_property')}`: `{result.get('starting_certainty')}` -> "
             f"`{result.get('final_certainty')}`"
@@ -765,11 +774,15 @@ def _build_per_study_dataframe(
         for bundle in rob_payload
         if isinstance(bundle, dict)
     }
-    grade_by_property = {
-        item.get("measurement_property"): item.get("final_certainty", "")
-        for item in grade_payload
-        if isinstance(item, dict)
-    }
+    grade_by_property = {}
+    for item in grade_payload:
+        if not isinstance(item, dict):
+            continue
+        key = item.get("measurement_property")
+        if bool(item.get("grade_executed", True)):
+            grade_by_property[key] = item.get("final_certainty", "")
+        else:
+            grade_by_property[key] = "not_graded"
 
     rows: list[dict[str, str]] = []
     for result in measurement_payload:

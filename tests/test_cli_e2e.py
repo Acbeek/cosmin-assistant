@@ -33,6 +33,7 @@ def test_cli_runs_end_to_end_and_exports_required_artifacts(tmp_path: Path) -> N
         "summary_report.md": out_dir / "summary_report.md",
         "per_study_results.csv": out_dir / "per_study_results.csv",
         "summary_report.docx": out_dir / "summary_report.docx",
+        "run_manifest.json": out_dir / "run_manifest.json",
     }
 
     for path in expected_paths.values():
@@ -53,9 +54,43 @@ def test_cli_runs_end_to_end_and_exports_required_artifacts(tmp_path: Path) -> N
     assert "# COSMIN Assistant Provisional Summary" in markdown_report
     assert "Measurement Property Ratings" in markdown_report
 
+    manifest = json.loads(expected_paths["run_manifest.json"].read_text(encoding="utf-8"))
+    assert manifest["source_article_path"].endswith("e2e_prom_article.md")
+    assert manifest["source_article_hash"]
+    assert manifest["profile"] == "prom"
+    assert manifest["python_version"]
+
     with expected_paths["per_study_results.csv"].open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     assert rows
     assert "measurement_property" in rows[0]
 
     assert "summary_report_docx:" in invocation.output
+
+
+def test_cli_fails_when_reusing_output_dir_with_changed_source_hash(tmp_path: Path) -> None:
+    article_path = tmp_path / "article.md"
+    article_path.write_text(
+        "# Study\nInstrument name: PROM-HASH.\nCronbach's alpha = 0.80.\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "results"
+    runner = CliRunner()
+
+    first = runner.invoke(
+        app,
+        [str(article_path), "--profile", "prom", "--out", str(out_dir)],
+    )
+    assert first.exit_code == 0, first.output
+
+    article_path.write_text(
+        "# Study\nInstrument name: PROM-HASH.\nCronbach's alpha = 0.75.\n",
+        encoding="utf-8",
+    )
+    second = runner.invoke(
+        app,
+        [str(article_path), "--profile", "prom", "--out", str(out_dir)],
+    )
+
+    assert second.exit_code != 0
+    assert "stale artifacts" in second.output.lower()

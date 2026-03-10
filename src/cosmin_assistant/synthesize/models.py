@@ -8,6 +8,7 @@ from cosmin_assistant.models import (
     MeasurementPropertyRating,
     ModelBase,
     NonEmptyText,
+    PropertyActivationStatus,
     ReviewerDecisionStatus,
     StableId,
 )
@@ -27,6 +28,9 @@ class StudySynthesisInput(ModelBase):
     evidence_span_ids: tuple[StableId, ...] = Field(min_length=1)
     subgroup_label: str | None = None
     study_explanation: str | None = None
+    activation_status: PropertyActivationStatus = (
+        PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE
+    )
 
 
 class SubgroupExplanationPlaceholder(ModelBase):
@@ -54,3 +58,6 @@ class SynthesisAggregateResult(ModelBase):
     study_entries: tuple[StudySynthesisInput, ...] = Field(min_length=1)
     subgroup_explanation_placeholders: tuple[SubgroupExplanationPlaceholder, ...] = ()
     evidence_span_ids: tuple[StableId, ...] = Field(min_length=1)
+    activation_status: PropertyActivationStatus = (
+        PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE
+    )

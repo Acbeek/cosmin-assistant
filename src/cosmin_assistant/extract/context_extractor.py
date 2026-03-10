@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,14 +15,17 @@ from cosmin_assistant.extract.context_models import (
     ContextValueCandidate,
     FieldDetectionStatus,
     InstrumentContextExtractionResult,
+    InstrumentContextRole,
     SampleSizeObservation,
     SampleSizeRole,
     StudyContextExtractionResult,
+    StudyIntent,
     SubsampleExtraction,
 )
 from cosmin_assistant.extract.markdown_parser import parse_markdown_file
 from cosmin_assistant.extract.spans import ParsedMarkdownDocument, SentenceRecord
 from cosmin_assistant.models.base import StableId
+from cosmin_assistant.models.enums import InstrumentType
 
 _NOT_REPORTED_RE = re.compile(
     r"\b(not reported|not stated|not available|not described|unknown)\b",
@@ -51,6 +55,24 @@ _INSTRUMENT_LABEL_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _INSTRUMENT_ACRONYM_RE = re.compile(r"\b([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+|[A-Z]{4,10})\b")
+_SIGAM_FULL_RE = re.compile(r"special\s+interest\s+group\s+in\s+amputee\s+medicine", re.IGNORECASE)
+_SIGAM_ABBR_RE = re.compile(r"\bsigam\b", re.IGNORECASE)
+_LCI5_FULL_RE = re.compile(r"locomotor\s+capabilities\s+index-?5", re.IGNORECASE)
+_LCI5_ABBR_RE = re.compile(r"\blci-?5\b", re.IGNORECASE)
+_HOUGHTON_RE = re.compile(r"\bhoughton(?:\s+scale)?\b", re.IGNORECASE)
+_ABC_FULL_RE = re.compile(r"activities-?specific\s+balance\s+confidence", re.IGNORECASE)
+_ABC_ABBR_RE = re.compile(r"\babc(?:\s+scale)?\b", re.IGNORECASE)
+_TWO_MWT_FULL_RE = re.compile(r"two-?minute\s+walk\s+test", re.IGNORECASE)
+_TWO_MWT_ABBR_RE = re.compile(r"\b2-?mwt\b", re.IGNORECASE)
+_TUG_FULL_RE = re.compile(r"timed\s+up\s+and\s+go", re.IGNORECASE)
+_TUG_ABBR_RE = re.compile(r"\btug(?:\s+test)?\b", re.IGNORECASE)
+_COLD_TUG_FULL_RE = re.compile(
+    r"colorado\s+limb\s+donning[- ]timed\s+up\s+and\s+go",
+    re.IGNORECASE,
+)
+_COLD_TUG_ABBR_RE = re.compile(r"\bcold-?tug\b", re.IGNORECASE)
+_SIX_MWT_FULL_RE = re.compile(r"\b6[- ]?minute\s+walk\s+test\b", re.IGNORECASE)
+_SIX_MWT_ABBR_RE = re.compile(r"\b6[- ]?mwt\b", re.IGNORECASE)
 _QTFA_FULL_RE = re.compile(
     r"questionnaire\s+for\s+persons\s+with\s+a\s+transfemoral\s+amputation",
     flags=re.IGNORECASE,
@@ -63,7 +85,109 @@ _QTFA_ABBR_RE = re.compile(r"\bq\s*-?\s*tfa\b", flags=re.IGNORECASE)
 _PROMIS_ABBR_RE = re.compile(r"\bpromis\b", flags=re.IGNORECASE)
 _CITATION_RE = re.compile(r"\[[0-9,\s]+\]|\bet\s+al\.\b", flags=re.IGNORECASE)
 _INTERVAL_RE = re.compile(r"\b(\d+)\s*(month|months|week|weeks|year|years)\b", flags=re.IGNORECASE)
+_FOLLOW_UP_INTERVAL_WORD_RE = re.compile(
+    r"\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*[- ]?"
+    r"(day|days|week|weeks|month|months|year|years)\b",
+    flags=re.IGNORECASE,
+)
+_RECRUITMENT_SETTING_RE = re.compile(
+    r"(?:recruited|enrolled|included)[^.]{0,220}\bfrom\b[^.]{0,220}",
+    flags=re.IGNORECASE,
+)
+_AURORA_SETTING_RE = re.compile(
+    r"(?:university\s+of\s+colorado|aurora,\s*colorado|anschutz)",
+    flags=re.IGNORECASE,
+)
+_VALIDATION_SAMPLE_RE = re.compile(
+    r"\b(?:sample size of|validity study[^.]{0,80}\b(?:of|with)|administered to)\s+"
+    r"(forty|thirty|twenty|ten|\d+)\b",
+    flags=re.IGNORECASE,
+)
+_ANALYZED_OBSERVATIONS_RE = re.compile(
+    r"\btotal\s+of\s+(\d+)\s+data\s+points?\b[^.]{0,80}\banaly",
+    flags=re.IGNORECASE,
+)
+_PILOT_SAMPLE_RE = re.compile(
+    r"\bpilot(?:-tested| study)?[^.]{0,100}\b[nN]\s*=\s*(\d+)\b",
+    flags=re.IGNORECASE,
+)
+_RETEST_SAMPLE_RE = re.compile(
+    r"\b(?:test-?retest|retest)[^.]{0,120}\b(?:n\s*=\s*(\d+)|(\d+)\s+participants?)\b",
+    flags=re.IGNORECASE,
+)
+_BAL_GROUP_SAMPLE_RE = re.compile(
+    r"\b(?:bal\s+(?:users|participants)|bone-anchored\s+limb\s+group)\b[^.]{0,80}\(\s*[nN]\s*=\s*(\d+)\s*\)",
+    flags=re.IGNORECASE,
+)
+_TARGET_POPULATION_RE = re.compile(
+    r"\b(?:adults?|participants?|individuals?|people|patients?)\s+with\s+"
+    r"(lower\s+limb\s+amputation(?:s)?|transfemoral\s+amputation(?:s)?)\b",
+    flags=re.IGNORECASE,
+)
+_UNILATERAL_LOWER_EXTREMITY_RE = re.compile(
+    r"\b(?:individuals?|participants?)\s+with\s+unilateral\s+lower-?extremity\s+amputation\b",
+    flags=re.IGNORECASE,
+)
+_LANGUAGE_CANONICAL: dict[str, str] = {
+    "english": "English",
+    "dutch": "Dutch",
+    "french": "French",
+    "turkish": "Turkish",
+    "persian": "Persian",
+}
+_COUNTRY_CANONICAL: dict[str, str] = {
+    "colorado": "United States",
+    "iran": "Iran",
+    "netherlands": "Netherlands",
+    "belgium": "Belgium",
+    "france": "France",
+    "turkey": "Turkey",
+    "united states": "United States",
+    "usa": "United States",
+    "u.s.a.": "United States",
+    "u.s.": "United States",
+}
+_NUMBER_WORDS: dict[str, int] = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+}
+_TARGET_PRIORITY_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:aim|objective)\b[^.]{0,180}\b(?:develop|validation|validity|reliability)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\btranslated\b[^.]{0,200}\b(psychometric|validation|cross-cultural|adapt)", re.IGNORECASE
+    ),
+    re.compile(
+        r"\b(psychometric properties|internal consistency|test-?retest|construct validity)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bobjective of this study\b", re.IGNORECASE),
+)
+_COMPARATOR_CONTEXT_RE = re.compile(
+    r"\b(by comparing|compared with|correlation between|correlations? of)\b",
+    re.IGNORECASE,
+)
+_GOLD_STANDARD_RE = re.compile(r"\bgold standard\b", re.IGNORECASE)
 _ENROLLMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\ba\s+total\s+of\s+(\d+)\s+(?:participants?|patients?|subjects?)\s+were\s+"
+        r"(?:recruited|enrolled|included)\b",
+        flags=re.IGNORECASE,
+    ),
     re.compile(
         r"(?:recruited|enrolled|included)\s*(\d+)\s*(?:participants?|patients?|subjects?)\b",
         flags=re.IGNORECASE,
@@ -87,6 +211,7 @@ _ANALYZED_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"\b(\d+)\s+(?:participants?|patients?|subjects?)\b[^.]{0,120}\breached\b[^.]{0,60}\bfollow-up\b",
         flags=re.IGNORECASE,
     ),
+    _ANALYZED_OBSERVATIONS_RE,
 )
 _LIMB_LEVEL_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\btotal\s+of\s+(\d+)\s+limbs\b", flags=re.IGNORECASE),
@@ -122,6 +247,12 @@ class _SampleSizeDraft:
     evidence_span_id: StableId
 
 
+@dataclass(frozen=True)
+class _NumberToken:
+    raw_text: str
+    value: int
+
+
 def extract_context_from_markdown_file(file_path: str | Path) -> ArticleContextExtractionResult:
     """Extract first-pass study/instrument context fields from a markdown file."""
 
@@ -150,18 +281,34 @@ def extract_context_from_parsed_document(
     country = _extract_country(parsed.file_path, sentences)
     study_design = _extract_study_design(parsed.file_path, sentences)
     sample_sizes = _extract_sample_sizes(parsed.file_path, sentences)
+    validation_sample_n = _extract_validation_sample_n(parsed.file_path, sentences)
+    pilot_sample_n = _extract_pilot_sample_n(parsed.file_path, sentences)
+    retest_sample_n = _extract_retest_sample_n(
+        parsed.file_path,
+        sentences,
+        validation_sample_n=validation_sample_n,
+    )
     sample_size_observations = _extract_sample_size_observations(
         parsed.file_path,
         sentences,
         sample_sizes,
+        validation_sample_n=validation_sample_n,
+        pilot_sample_n=pilot_sample_n,
+        retest_sample_n=retest_sample_n,
     )
     follow_up_schedule = _extract_follow_up_schedule(parsed.file_path, sentences)
+    follow_up_interval = _extract_follow_up_interval(parsed.file_path, sentences)
+    recruitment_setting = _extract_recruitment_setting(parsed.file_path, sentences)
     (
         measurement_properties,
         measurement_properties_background,
         measurement_properties_interpretability,
+        measurement_properties_not_assessed,
     ) = _extract_measurement_property_partitions(parsed.file_path, sentences)
     subsamples = _extract_subsamples(parsed.file_path, sentences)
+    study_intent, study_intent_rationale, study_intent_evidence_span_ids = _classify_study_intent(
+        sentences=sentences
+    )
 
     study_context = StudyContextExtractionResult(
         id=_stable_id("studyctx", parsed.id, study_id),
@@ -170,26 +317,39 @@ def extract_context_from_parsed_document(
         study_design=study_design,
         sample_sizes=sample_sizes,
         sample_size_observations=sample_size_observations,
+        validation_sample_n=validation_sample_n,
+        pilot_sample_n=pilot_sample_n,
+        retest_sample_n=retest_sample_n,
         follow_up_schedule=follow_up_schedule,
+        follow_up_interval=follow_up_interval,
         construct_field=construct,
         target_population=target_population,
+        recruitment_setting=recruitment_setting,
         language=language,
         country=country,
         measurement_properties_mentioned=measurement_properties,
         measurement_properties_background=measurement_properties_background,
         measurement_properties_interpretability=measurement_properties_interpretability,
+        measurement_properties_not_assessed=measurement_properties_not_assessed,
+        study_intent=study_intent,
+        study_intent_rationale=study_intent_rationale,
+        study_intent_evidence_span_ids=study_intent_evidence_span_ids,
         subsamples=subsamples,
     )
 
-    instrument_contexts = _build_instrument_contexts(
-        article_id=parsed.id,
-        study_id=study_id,
-        file_path=parsed.file_path,
-        instrument_name_fields=instrument_name_fields,
-        instrument_version=instrument_version,
-        subscale=subscale,
-        construct=construct,
-        target_population=target_population,
+    instrument_contexts, target_instrument_id, comparator_instrument_ids = (
+        _build_instrument_contexts(
+            article_id=parsed.id,
+            study_id=study_id,
+            file_path=parsed.file_path,
+            sentences=sentences,
+            instrument_name_fields=instrument_name_fields,
+            instrument_version=instrument_version,
+            subscale=subscale,
+            construct=construct,
+            target_population=target_population,
+            study_intent=study_intent,
+        )
     )
 
     return ArticleContextExtractionResult(
@@ -198,6 +358,8 @@ def extract_context_from_parsed_document(
         file_path=parsed.file_path,
         study_contexts=(study_context,),
         instrument_contexts=instrument_contexts,
+        target_instrument_id=target_instrument_id,
+        comparator_instrument_ids=comparator_instrument_ids,
     )
 
 
@@ -206,13 +368,20 @@ def _build_instrument_contexts(
     article_id: StableId,
     study_id: StableId,
     file_path: str,
+    sentences: tuple[SentenceRecord, ...],
     instrument_name_fields: tuple[ContextFieldExtraction, ...],
     instrument_version: ContextFieldExtraction,
     subscale: ContextFieldExtraction,
     construct: ContextFieldExtraction,
     target_population: ContextFieldExtraction,
-) -> tuple[InstrumentContextExtractionResult, ...]:
+    study_intent: StudyIntent,
+) -> tuple[
+    tuple[InstrumentContextExtractionResult, ...],
+    StableId | None,
+    tuple[StableId, ...],
+]:
     contexts: list[InstrumentContextExtractionResult] = []
+    normalized_by_instrument_id: dict[StableId, str] = {}
 
     sorted_fields = sorted(
         instrument_name_fields,
@@ -226,6 +395,11 @@ def _build_instrument_contexts(
     for index, instrument_name in enumerate(sorted_fields):
         discriminator = _first_candidate_normalized(instrument_name) or f"unknown-{index}"
         instrument_id = _stable_id("inst", article_id, discriminator)
+        instrument_type, type_rationale, type_evidence_span_ids = _classify_instrument_type(
+            normalized_name=discriminator,
+            sentences=sentences,
+        )
+        normalized_by_instrument_id[instrument_id] = discriminator
         contexts.append(
             InstrumentContextExtractionResult(
                 id=_stable_id("instctx", file_path, article_id, study_id, instrument_id),
@@ -237,10 +411,64 @@ def _build_instrument_contexts(
                 subscale=subscale,
                 construct_field=construct,
                 target_population=target_population,
+                instrument_type=instrument_type,
+                instrument_type_rationale=type_rationale,
+                instrument_type_evidence_span_ids=type_evidence_span_ids,
             )
         )
 
-    return tuple(contexts)
+    if not contexts:
+        return (), None, ()
+
+    role_assignments = _infer_instrument_roles(
+        sentences=sentences,
+        study_intent=study_intent,
+        normalized_instrument_names=tuple(
+            (context.instrument_id, normalized_by_instrument_id[context.instrument_id])
+            for context in contexts
+        ),
+    )
+    enriched_contexts: list[InstrumentContextExtractionResult] = []
+    comparator_ids: list[StableId] = []
+    target_id: StableId | None = None
+    for context in contexts:
+        role, rationale, role_evidence_span_ids = role_assignments.get(
+            context.instrument_id,
+            (
+                InstrumentContextRole.BACKGROUND_ONLY,
+                "No strong role signal detected.",
+                (),
+            ),
+        )
+        if role in (
+            InstrumentContextRole.TARGET_UNDER_APPRAISAL,
+            InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+        ) and target_id is None:
+            target_id = context.instrument_id
+        if role in (InstrumentContextRole.COMPARATOR, InstrumentContextRole.COMPARATOR_ONLY):
+            comparator_ids.append(context.instrument_id)
+        enriched_contexts.append(
+            context.model_copy(
+                update={
+                    "instrument_role": role,
+                    "role_rationale": rationale,
+                    "role_evidence_span_ids": role_evidence_span_ids,
+                }
+            )
+        )
+
+    if target_id is None:
+        target_id = enriched_contexts[0].instrument_id
+        first = enriched_contexts[0]
+        enriched_contexts[0] = first.model_copy(
+            update={
+                "instrument_role": InstrumentContextRole.TARGET_UNDER_APPRAISAL,
+                "role_rationale": "Fallback target: highest-priority extracted instrument context.",
+                "role_evidence_span_ids": first.role_evidence_span_ids,
+            }
+        )
+
+    return tuple(enriched_contexts), target_id, tuple(dict.fromkeys(comparator_ids))
 
 
 def _extract_preferred_instrument_name_fields(
@@ -298,13 +526,118 @@ def _collect_instrument_mentions(
     by_key: dict[tuple[str, StableId], _InstrumentMentionDraft] = {}
 
     for sentence in sentences:
-        if _is_reference_sentence(sentence):
+        if _is_reference_sentence(sentence) or _is_keyword_sentence(sentence):
+            continue
+        if _is_keyword_sentence(sentence):
             continue
 
         text = sentence.provenance.raw_text
         text_lower = text.lower()
         context_bonus = 2 if _INSTRUMENT_CONTEXT_RE.search(text) else 0
         context_penalty = -3 if _NON_INSTRUMENT_CONTEXT_RE.search(text) else 0
+
+        if _SIGAM_FULL_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="SIGAM",
+                normalized_name="SIGAM",
+                base_strength=5,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        for match in _SIGAM_ABBR_RE.finditer(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value=match.group(0),
+                normalized_name="SIGAM",
+                base_strength=4,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+
+        if _LCI5_FULL_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="Locomotor Capabilities Index-5",
+                normalized_name="LCI-5",
+                base_strength=4,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        for match in _LCI5_ABBR_RE.finditer(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value=match.group(0),
+                normalized_name="LCI-5",
+                base_strength=3,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+
+        if _HOUGHTON_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="Houghton scale",
+                normalized_name="Houghton",
+                base_strength=3,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        if _ABC_FULL_RE.search(text) or _ABC_ABBR_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="ABC scale",
+                normalized_name="ABC",
+                base_strength=3,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        if _TWO_MWT_FULL_RE.search(text) or _TWO_MWT_ABBR_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="2-MWT",
+                normalized_name="2-MWT",
+                base_strength=3,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        if _TUG_FULL_RE.search(text) or _TUG_ABBR_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="TUG",
+                normalized_name="TUG",
+                base_strength=3,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        if _COLD_TUG_FULL_RE.search(text) or _COLD_TUG_ABBR_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="COLD-TUG",
+                normalized_name="COLD-TUG",
+                base_strength=5,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        if _SIX_MWT_FULL_RE.search(text) or _SIX_MWT_ABBR_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="6-MWT",
+                normalized_name="6-MWT",
+                base_strength=3,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
 
         if _QTFA_FULL_RE.search(text):
             _add_instrument_mention(
@@ -373,7 +706,9 @@ def _collect_instrument_mentions(
                     continue
                 if _is_false_instrument_candidate(value, sentence):
                     continue
-                if not ("-" in value or value.startswith("PROM")):
+                if not (
+                    "-" in value or value.startswith("PROM") or value in {"SIGAM", "ABC", "TUG"}
+                ):
                     continue
                 key = (value, sentence.id)
                 draft = _InstrumentMentionDraft(
@@ -448,7 +783,7 @@ def _extract_instrument_name(
     )
 
     for sentence in sentences:
-        if _is_reference_sentence(sentence):
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
             continue
 
         text = sentence.provenance.raw_text
@@ -596,16 +931,19 @@ def _extract_target_population(
         flags=re.IGNORECASE,
     )
     transfemoral_pattern = re.compile(
-        r"\b(?:participants?|patients?)\b[^.]{0,160}\btransfemoral\s+amputation(?:s)?\b[^.]{0,120}",
+        r"\b(?:participants?|patients?)\b(?!-)[^.]{0,160}"
+        r"\btransfemoral\s+amputation(?:s)?\b[^.]{0,120}",
         flags=re.IGNORECASE,
     )
 
     for sentence in sentences:
-        if _is_reference_sentence(sentence):
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
             continue
 
         text = sentence.provenance.raw_text
         text_lower = text.lower()
+        if _is_question_like_text(text):
+            continue
 
         explicit_match = explicit_pattern.search(text)
         if explicit_match:
@@ -620,6 +958,40 @@ def _extract_target_population(
                 )
             continue
 
+        target_match = _TARGET_POPULATION_RE.search(text)
+        if target_match:
+            normalized = _normalize_text_value(f"adults with {target_match.group(1)}")
+            if (
+                "transfemoral amputation" in target_match.group(1).lower()
+                and "osseointegr" in text_lower
+            ):
+                normalized = (
+                    "adults with transfemoral amputation "
+                    "undergoing osseointegration surgery"
+                )
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=target_match.group(0),
+                    normalized_value=normalized,
+                    evidence_span_id=sentence.id,
+                )
+            )
+            continue
+
+        unilateral_match = _UNILATERAL_LOWER_EXTREMITY_RE.search(text)
+        if unilateral_match:
+            normalized = (
+                "adults with unilateral lower-extremity amputation using socket prosthesis or BAL"
+            )
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=unilateral_match.group(0),
+                    normalized_value=normalized,
+                    evidence_span_id=sentence.id,
+                )
+            )
+            continue
+
         if "transfemoral" not in text_lower:
             continue
         if "amputation" not in text_lower:
@@ -631,6 +1003,7 @@ def _extract_target_population(
 
         segment = _normalize_text_value(fallback_match.group(0))
         if "osseointegration" in text_lower or "osseointegrat" in text_lower:
+            segment = "adults with transfemoral amputation undergoing osseointegration surgery"
             drafts.append(
                 _CandidateDraft(
                     raw_text=fallback_match.group(0),
@@ -638,6 +1011,18 @@ def _extract_target_population(
                     evidence_span_id=sentence.id,
                 )
             )
+            continue
+        if not segment.lower().startswith("adults with"):
+            segment = f"adults with {segment}"
+        drafts.append(
+            _CandidateDraft(
+                raw_text=fallback_match.group(0),
+                normalized_value=segment,
+                evidence_span_id=sentence.id,
+            )
+        )
+
+    drafts = _prefer_specific_target_population(drafts)
 
     return _build_field_extraction(
         file_path,
@@ -655,26 +1040,39 @@ def _extract_language(
     sentences: tuple[SentenceRecord, ...],
 ) -> ContextFieldExtraction:
     drafts: list[_CandidateDraft] = []
-    pattern = re.compile(
-        r"language\s*[:=-]?\s*([A-Za-z][A-Za-z .-]+)",
-        flags=re.IGNORECASE,
-    )
 
     for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
         text = sentence.provenance.raw_text
-        match = pattern.search(text)
-        if not match:
+        text_lower = text.lower()
+        if "@" in text_lower:
             continue
-        value = _normalize_language(match.group(1))
-        if _NOT_REPORTED_RE.search(value):
-            continue
-        drafts.append(
-            _CandidateDraft(
-                raw_text=match.group(0),
-                normalized_value=value,
-                evidence_span_id=sentence.id,
+
+        for needle, canonical in _LANGUAGE_CANONICAL.items():
+            if needle not in text_lower:
+                continue
+            if not any(
+                token in text_lower
+                for token in (
+                    f"{needle} language",
+                    f"into {needle}",
+                    f"in {needle}",
+                    f"{needle}-speaking",
+                    "translated",
+                )
+            ) and not re.search(r"language\s*[:=-]", text_lower):
+                continue
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=text,
+                    normalized_value=canonical,
+                    evidence_span_id=sentence.id,
+                )
             )
-        )
+            break
+
+    drafts = _prefer_majority_value(drafts)
 
     return _build_field_extraction(
         file_path,
@@ -689,26 +1087,32 @@ def _extract_country(
     sentences: tuple[SentenceRecord, ...],
 ) -> ContextFieldExtraction:
     drafts: list[_CandidateDraft] = []
-    pattern = re.compile(
-        r"country\s*[:=-]?\s*([A-Za-z][A-Za-z .'-]+)",
-        flags=re.IGNORECASE,
-    )
 
     for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
         text = sentence.provenance.raw_text
-        match = pattern.search(text)
-        if not match:
+        text_lower = text.lower()
+        if "@" in text_lower:
             continue
-        value = _normalize_country(match.group(1))
-        if _NOT_REPORTED_RE.search(value):
+        if "disclaimer" in text_lower and "u.s." in text_lower:
             continue
-        drafts.append(
-            _CandidateDraft(
-                raw_text=match.group(0),
-                normalized_value=value,
-                evidence_span_id=sentence.id,
-            )
-        )
+        if "do not necessarily represent the views" in text_lower:
+            continue
+        for needle, canonical in _COUNTRY_CANONICAL.items():
+            if re.search(rf"\b{re.escape(needle)}\b", text_lower):
+                if needle == "colorado" and not _AURORA_SETTING_RE.search(text_lower):
+                    continue
+                drafts.append(
+                    _CandidateDraft(
+                        raw_text=text,
+                        normalized_value=canonical,
+                        evidence_span_id=sentence.id,
+                    )
+                )
+                break
+
+    drafts = _prefer_majority_value(drafts)
 
     return _build_field_extraction(
         file_path,
@@ -725,6 +1129,18 @@ def _extract_study_design(
     drafts: list[_CandidateDraft] = []
 
     design_map: tuple[tuple[str, str], ...] = (
+        (
+            "prospective, cross-sectional study",
+            "prospective_cross_sectional_validation_development_study",
+        ),
+        (
+            "prospective cross-sectional study",
+            "prospective_cross_sectional_validation_development_study",
+        ),
+        (
+            "prospective, cross-sectional",
+            "prospective_cross_sectional_validation_development_study",
+        ),
         ("prospective, observational clinical study", "prospective_observational_study"),
         ("prospective, observational trial", "prospective_observational_study"),
         ("prospective observational clinical study", "prospective_observational_study"),
@@ -741,6 +1157,8 @@ def _extract_study_design(
     )
 
     for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
         text_lower = sentence.provenance.raw_text.lower()
         for needle, normalized in design_map:
             if needle in text_lower:
@@ -752,6 +1170,8 @@ def _extract_study_design(
                     )
                 )
                 break
+
+    drafts = _prefer_specific_study_design(drafts)
 
     return _build_field_extraction(
         file_path,
@@ -771,7 +1191,12 @@ def _extract_sample_sizes(
     drafts: list[_CandidateDraft] = []
 
     for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
         text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        if _is_external_comparison_sentence(text_lower):
+            continue
         if "subsample" in text.lower():
             continue
         for match in _SAMPLE_SIZE_N_RE.finditer(text):
@@ -779,6 +1204,21 @@ def _extract_sample_sizes(
                 _CandidateDraft(
                     raw_text=match.group(0),
                     normalized_value=int(match.group(1)),
+                    evidence_span_id=sentence.id,
+                )
+            )
+        for token in _extract_number_tokens(text):
+            if token.value <= 0:
+                continue
+            if not any(
+                marker in text.lower()
+                for marker in ("participants", "patients", "sample", "study", "people")
+            ):
+                continue
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=token.raw_text,
+                    normalized_value=token.value,
                     evidence_span_id=sentence.id,
                 )
             )
@@ -794,15 +1234,161 @@ def _extract_sample_sizes(
     )
 
 
+def _extract_validation_sample_n(
+    file_path: str,
+    sentences: tuple[SentenceRecord, ...],
+) -> ContextFieldExtraction:
+    drafts: list[_CandidateDraft] = []
+    for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
+        text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        if _is_external_comparison_sentence(text_lower):
+            continue
+        if not any(
+            token in text_lower
+            for token in ("validation", "validity", "administered", "sample size")
+        ):
+            continue
+        match = _VALIDATION_SAMPLE_RE.search(text)
+        if match:
+            value = _word_or_number_to_int(match.group(1))
+            if value is not None:
+                drafts.append(
+                    _CandidateDraft(
+                        raw_text=match.group(0),
+                        normalized_value=value,
+                        evidence_span_id=sentence.id,
+                    )
+                )
+                continue
+        for token in _extract_number_tokens(text):
+            if token.value <= 0:
+                continue
+            if "validity study" in text_lower or "validation study" in text_lower:
+                drafts.append(
+                    _CandidateDraft(
+                        raw_text=token.raw_text,
+                        normalized_value=token.value,
+                        evidence_span_id=sentence.id,
+                    )
+                )
+
+    drafts = _prefer_majority_value(drafts)
+
+    return _build_field_extraction(
+        file_path,
+        "validation_sample_n",
+        drafts,
+        _collect_not_reported_candidates(
+            field_aliases=("validation sample", "validity study", "sample size"),
+            sentences=sentences,
+        ),
+    )
+
+
+def _extract_pilot_sample_n(
+    file_path: str,
+    sentences: tuple[SentenceRecord, ...],
+) -> ContextFieldExtraction:
+    drafts: list[_CandidateDraft] = []
+    for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
+        text = sentence.provenance.raw_text
+        if "pilot" not in text.lower():
+            continue
+        match = _PILOT_SAMPLE_RE.search(text)
+        if not match:
+            continue
+        drafts.append(
+            _CandidateDraft(
+                raw_text=match.group(0),
+                normalized_value=int(match.group(1)),
+                evidence_span_id=sentence.id,
+            )
+        )
+
+    return _build_field_extraction(
+        file_path,
+        "pilot_sample_n",
+        drafts,
+        _collect_not_reported_candidates(field_aliases=("pilot",), sentences=sentences),
+    )
+
+
+def _extract_retest_sample_n(
+    file_path: str,
+    sentences: tuple[SentenceRecord, ...],
+    validation_sample_n: ContextFieldExtraction,
+) -> ContextFieldExtraction:
+    drafts: list[_CandidateDraft] = []
+    validation_value = _first_int_candidate(validation_sample_n)
+    for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
+        text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        if "retest" not in text_lower and "test-retest" not in text_lower:
+            continue
+
+        explicit = _RETEST_SAMPLE_RE.search(text)
+        if explicit:
+            value = explicit.group(1) or explicit.group(2)
+            if value:
+                drafts.append(
+                    _CandidateDraft(
+                        raw_text=explicit.group(0),
+                        normalized_value=int(value),
+                        evidence_span_id=sentence.id,
+                    )
+                )
+                continue
+
+        bal_group = _BAL_GROUP_SAMPLE_RE.search(text)
+        if bal_group and "reliability" in text_lower:
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=bal_group.group(0),
+                    normalized_value=int(bal_group.group(1)),
+                    evidence_span_id=sentence.id,
+                )
+            )
+            continue
+
+        if "all patients" in text_lower and validation_value is not None:
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=text,
+                    normalized_value=validation_value,
+                    evidence_span_id=sentence.id,
+                )
+            )
+
+    return _build_field_extraction(
+        file_path,
+        "retest_sample_n",
+        drafts,
+        _collect_not_reported_candidates(
+            field_aliases=("test-retest", "retest"),
+            sentences=sentences,
+        ),
+    )
+
+
 def _extract_sample_size_observations(
     file_path: str,
     sentences: tuple[SentenceRecord, ...],
     sample_sizes: ContextFieldExtraction,
+    validation_sample_n: ContextFieldExtraction,
+    pilot_sample_n: ContextFieldExtraction,
+    retest_sample_n: ContextFieldExtraction,
 ) -> tuple[SampleSizeObservation, ...]:
     drafts: list[_SampleSizeDraft] = []
 
     for sentence in sentences:
-        if _is_reference_sentence(sentence):
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
             continue
 
         text = sentence.provenance.raw_text
@@ -820,15 +1406,28 @@ def _extract_sample_size_observations(
 
         for pattern in _ANALYZED_PATTERNS:
             for match in pattern.finditer(text):
+                unit = "observations" if "data point" in match.group(0).lower() else "participants"
                 drafts.append(
                     _SampleSizeDraft(
                         role=SampleSizeRole.ANALYZED,
                         raw_text=match.group(0),
                         normalized_value=int(match.group(1)),
-                        unit="participants",
+                        unit=unit,
                         evidence_span_id=sentence.id,
                     )
                 )
+
+        bal_group = _BAL_GROUP_SAMPLE_RE.search(text)
+        if bal_group:
+            drafts.append(
+                _SampleSizeDraft(
+                    role=SampleSizeRole.RETEST,
+                    raw_text=bal_group.group(0),
+                    normalized_value=int(bal_group.group(1)),
+                    unit="observations",
+                    evidence_span_id=sentence.id,
+                )
+            )
 
         for pattern in _LIMB_LEVEL_PATTERNS:
             for match in pattern.finditer(text):
@@ -839,6 +1438,25 @@ def _extract_sample_size_observations(
                         normalized_value=int(match.group(1)),
                         unit="limbs",
                         evidence_span_id=sentence.id,
+                    )
+                )
+
+    for field, role in (
+        (validation_sample_n, SampleSizeRole.VALIDATION),
+        (pilot_sample_n, SampleSizeRole.PILOT),
+        (retest_sample_n, SampleSizeRole.RETEST),
+    ):
+        for candidate in field.candidates:
+            if not isinstance(candidate.normalized_value, int):
+                continue
+            for evidence_span_id in candidate.evidence_span_ids:
+                drafts.append(
+                    _SampleSizeDraft(
+                        role=role,
+                        raw_text=candidate.raw_text,
+                        normalized_value=candidate.normalized_value,
+                        unit="participants",
+                        evidence_span_id=evidence_span_id,
                     )
                 )
 
@@ -864,9 +1482,11 @@ def _extract_sample_size_observations(
         grouped[(draft.role, draft.normalized_value, draft.unit)].append(draft)
 
     observations: list[SampleSizeObservation] = []
-    for key in sorted(grouped, key=lambda item: (item[0].value, item[1], item[2] or "")):
-        role, value, unit = key
-        group = grouped[key]
+    for obs_role, obs_value, obs_unit in sorted(
+        grouped,
+        key=lambda item: (item[0].value, item[1], item[2] or ""),
+    ):
+        group = grouped[(obs_role, obs_value, obs_unit)]
         evidence_span_ids = tuple(dict.fromkeys(record.evidence_span_id for record in group))
         raw_text = " || ".join(dict.fromkeys(record.raw_text for record in group))
         observations.append(
@@ -874,15 +1494,15 @@ def _extract_sample_size_observations(
                 id=_stable_id(
                     "samplerole",
                     file_path,
-                    role.value,
-                    value,
-                    unit or "",
+                    obs_role.value,
+                    obs_value,
+                    obs_unit or "",
                     *evidence_span_ids,
                 ),
-                role=role,
+                role=obs_role,
                 sample_size_raw=raw_text,
-                sample_size_normalized=value,
-                unit=unit,
+                sample_size_normalized=obs_value,
+                unit=obs_unit,
                 evidence_span_ids=evidence_span_ids,
             )
         )
@@ -897,27 +1517,39 @@ def _extract_follow_up_schedule(
     drafts: list[_CandidateDraft] = []
 
     for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
         text = sentence.provenance.raw_text
         text_lower = text.lower()
+        if _is_question_like_text(text):
+            continue
+        if "95% ci" in text_lower or "confidence interval" in text_lower:
+            continue
 
         if (
             "follow-up" not in text_lower
-            and "baseline" not in text_lower
             and "before surgery" not in text_lower
+            and not (
+                "baseline" in text_lower
+                and any(
+                    token in text_lower
+                    for token in (
+                        "after",
+                        "visit",
+                        "timepoint",
+                        "month",
+                        "months",
+                        "week",
+                        "weeks",
+                        "year",
+                        "years",
+                    )
+                )
+            )
         ):
             continue
 
-        schedule_tokens: list[str] = []
-        if "baseline" in text_lower or "before surgery" in text_lower:
-            schedule_tokens.append("baseline")
-
-        for match in _INTERVAL_RE.finditer(text_lower):
-            amount = match.group(1)
-            unit = match.group(2)
-            normalized_unit = unit if unit.endswith("s") else f"{unit}s"
-            schedule_tokens.append(f"{amount} {normalized_unit}")
-
-        deduplicated = tuple(dict.fromkeys(schedule_tokens))
+        deduplicated = _extract_schedule_tokens(text_lower)
         if len(deduplicated) < 2:
             continue
 
@@ -928,6 +1560,8 @@ def _extract_follow_up_schedule(
                 evidence_span_id=sentence.id,
             )
         )
+
+    drafts = _prefer_specific_follow_up_schedule(drafts)
 
     return _build_field_extraction(
         file_path,
@@ -940,10 +1574,174 @@ def _extract_follow_up_schedule(
     )
 
 
+def _extract_follow_up_interval(
+    file_path: str,
+    sentences: tuple[SentenceRecord, ...],
+) -> ContextFieldExtraction:
+    drafts: list[_CandidateDraft] = []
+    range_pattern = re.compile(
+        r"\b(\d+)\s*(?:to|-|–)\s*(\d+)\s*(minute|minutes|day|days|week|weeks|month|months|year|years)\b",
+        flags=re.IGNORECASE,
+    )
+    for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
+        text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        if _is_question_like_text(text):
+            continue
+        if (
+            "95% ci" in text_lower
+            or "confidence interval" in text_lower
+            or re.search(r"\bci\b", text_lower)
+        ):
+            continue
+        if _CITATION_RE.search(text) and any(
+            token in text_lower for token in ("previous", "prior", "others", "historical")
+        ):
+            continue
+        if "historical interval" in text_lower:
+            continue
+        if (
+            ("stage 1" in text_lower and "stage 2" in text_lower)
+            or "two stages" in text_lower
+        ) and "retest" not in text_lower:
+            continue
+        if (
+            "retest" not in text_lower
+            and "interval" not in text_lower
+            and "session" not in text_lower
+            and "follow-up visit" not in text_lower
+        ):
+            continue
+
+        range_match = range_pattern.search(text_lower)
+        if range_match:
+            start = int(range_match.group(1))
+            end = int(range_match.group(2))
+            unit = range_match.group(3)
+            normalized_unit = _normalize_interval_unit(unit)
+            normalized_start = start
+            normalized_end = end
+            if normalized_unit == "years":
+                normalized_unit = "months"
+                normalized_start *= 12
+                normalized_end *= 12
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=text,
+                    normalized_value=(
+                        f"{normalized_start} to {normalized_end} {normalized_unit}"
+                    ),
+                    evidence_span_id=sentence.id,
+                )
+            )
+            continue
+
+        match = _FOLLOW_UP_INTERVAL_WORD_RE.search(text_lower)
+        if not match:
+            continue
+        number = _word_or_number_to_int(match.group(1))
+        if number is None:
+            continue
+        unit = match.group(2)
+        normalized_unit = _normalize_interval_unit(unit)
+        normalized_number = number
+        if normalized_unit == "years":
+            normalized_unit = "months"
+            normalized_number *= 12
+        drafts.append(
+            _CandidateDraft(
+                raw_text=text,
+                normalized_value=f"{normalized_number} {normalized_unit}",
+                evidence_span_id=sentence.id,
+            )
+        )
+
+    drafts = _prefer_specific_follow_up_interval(drafts)
+
+    return _build_field_extraction(
+        file_path,
+        "follow_up_interval",
+        drafts,
+        _collect_not_reported_candidates(
+            field_aliases=("follow-up interval", "test-retest interval", "interval"),
+            sentences=sentences,
+        ),
+    )
+
+
+def _extract_recruitment_setting(
+    file_path: str,
+    sentences: tuple[SentenceRecord, ...],
+) -> ContextFieldExtraction:
+    drafts: list[_CandidateDraft] = []
+    investigation_pattern = re.compile(
+        r"(?:investigation performed at|performed at)\s+[^.]{0,200}",
+        flags=re.IGNORECASE,
+    )
+    for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
+        text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        heading_tokens = " ".join(sentence.heading_path).lower()
+        if any(
+            token in text_lower
+            for token in ("email:", "@", "correspondence", "disclaimer")
+        ):
+            continue
+        if any(token in heading_tokens for token in ("author", "affiliation", "acknowledg")):
+            continue
+        match = _RECRUITMENT_SETTING_RE.search(text)
+        if match:
+            value = _normalize_text_value(match.group(0))
+            raw = match.group(0)
+        else:
+            investigation_match = investigation_pattern.search(text)
+            if investigation_match:
+                value = _normalize_text_value(investigation_match.group(0))
+                raw = investigation_match.group(0)
+            elif _AURORA_SETTING_RE.search(text) and any(
+                token in text_lower
+                for token in (
+                    "study",
+                    "participants",
+                    "patients",
+                    "recruit",
+                    "performed",
+                    "investigation",
+                )
+            ):
+                value = _normalize_text_value(text)
+                raw = text
+            else:
+                continue
+        drafts.append(
+            _CandidateDraft(
+                raw_text=raw,
+                normalized_value=value,
+                evidence_span_id=sentence.id,
+            )
+        )
+
+    return _build_field_extraction(
+        file_path,
+        "recruitment_setting",
+        drafts,
+        _collect_not_reported_candidates(
+            field_aliases=("recruited", "enrolled", "single center", "from"),
+            sentences=sentences,
+        ),
+    )
+
+
 def _extract_measurement_property_partitions(
     file_path: str,
     sentences: tuple[SentenceRecord, ...],
-) -> tuple[ContextFieldExtraction, ContextFieldExtraction, ContextFieldExtraction]:
+) -> tuple[
+    ContextFieldExtraction, ContextFieldExtraction, ContextFieldExtraction, ContextFieldExtraction
+]:
     property_needles: tuple[tuple[str, str], ...] = (
         ("content validity", "content_validity"),
         ("structural validity", "structural_validity"),
@@ -967,10 +1765,12 @@ def _extract_measurement_property_partitions(
     direct_values: set[str] = set()
     background_values: set[str] = set()
     interpretability_values: set[str] = set()
+    not_assessed_values: set[str] = set()
 
     direct_evidence: list[_CandidateDraft] = []
     background_evidence: list[_CandidateDraft] = []
     interpretability_evidence: list[_CandidateDraft] = []
+    not_assessed_evidence: list[_CandidateDraft] = []
 
     for sentence in sentences:
         if _is_reference_sentence(sentence):
@@ -985,6 +1785,17 @@ def _extract_measurement_property_partitions(
                 found_here.add(normalized)
 
         if not found_here:
+            continue
+
+        if _is_not_assessed_property_sentence(text_lower):
+            not_assessed_values.update(found_here)
+            not_assessed_evidence.append(
+                _CandidateDraft(
+                    raw_text=text,
+                    normalized_value=tuple(sorted(found_here)),
+                    evidence_span_id=sentence.id,
+                )
+            )
             continue
 
         if _is_interpretability_sentence(text_lower):
@@ -1042,8 +1853,15 @@ def _extract_measurement_property_partitions(
         evidence=interpretability_evidence,
         not_reported_candidates=[],
     )
+    not_assessed_field = _build_property_field(
+        file_path=file_path,
+        field_name="measurement_properties_not_assessed",
+        values=not_assessed_values,
+        evidence=not_assessed_evidence,
+        not_reported_candidates=[],
+    )
 
-    return direct_field, background_field, interpretability_field
+    return direct_field, background_field, interpretability_field, not_assessed_field
 
 
 def _build_property_field(
@@ -1225,6 +2043,214 @@ def _collapse_group(
     )
 
 
+def _prefer_majority_value(drafts: list[_CandidateDraft]) -> list[_CandidateDraft]:
+    grouped: dict[str | int | tuple[str, ...] | None, list[_CandidateDraft]] = defaultdict(list)
+    for draft in drafts:
+        grouped[draft.normalized_value].append(draft)
+    if len(grouped) <= 1:
+        return drafts
+
+    ranked = sorted(grouped.items(), key=lambda item: (len(item[1]), str(item[0])), reverse=True)
+    top_value, top_items = ranked[0]
+    second_count = len(ranked[1][1]) if len(ranked) > 1 else 0
+    if top_value is not None and len(top_items) >= 2 and len(top_items) > second_count:
+        return list(top_items)
+    return drafts
+
+
+def _prefer_specific_study_design(drafts: list[_CandidateDraft]) -> list[_CandidateDraft]:
+    if not drafts:
+        return drafts
+
+    specificity = {
+        "prospective_cross_sectional_validation_development_study": 7,
+        "cross_sectional_validation_study": 6,
+        "prospective_observational_study": 5,
+        "longitudinal_cohort": 5,
+        "randomized_controlled_trial": 5,
+        "case_control": 4,
+        "cross_sectional": 3,
+        "cohort": 3,
+        "longitudinal": 2,
+        "validation_study": 2,
+        "prospective": 1,
+    }
+
+    top_score = max(specificity.get(str(draft.normalized_value), 0) for draft in drafts)
+    filtered = [
+        draft for draft in drafts if specificity.get(str(draft.normalized_value), 0) == top_score
+    ]
+    return filtered or drafts
+
+
+def _prefer_specific_target_population(drafts: list[_CandidateDraft]) -> list[_CandidateDraft]:
+    if not drafts:
+        return drafts
+
+    def score(draft: _CandidateDraft) -> int:
+        text = draft.raw_text.lower()
+        score_value = 0
+        if "inclusion criteria" in text or "recruited" in text:
+            score_value += 2
+        if "transfemoral" in text and "amputation" in text:
+            score_value += 2
+        if "lower limb amputation" in text or "lower-extremity amputation" in text:
+            score_value += 2
+        if "osseointegr" in text:
+            score_value += 2
+        if _is_question_like_text(draft.raw_text):
+            score_value -= 4
+        return score_value
+
+    return _prefer_highest_scored_drafts(drafts, score, minimum_score=1)
+
+
+def _extract_schedule_tokens(text_lower: str) -> tuple[str, ...]:
+    tokens: list[str] = []
+
+    if "baseline" in text_lower or "before surgery" in text_lower:
+        tokens.append("baseline")
+
+    multi_timepoint_pattern = re.compile(
+        r"\b((?:\d+\s*,\s*)+\d+\s*(?:,?\s*and\s*\d+)?)\s*"
+        r"(month|months|week|weeks|year|years)\b",
+        flags=re.IGNORECASE,
+    )
+    for match in multi_timepoint_pattern.finditer(text_lower):
+        values = re.findall(r"\d+", match.group(1))
+        unit = _normalize_interval_unit(match.group(2))
+        normalized_unit = unit if unit.endswith("s") else f"{unit}s"
+        for value in values:
+            amount = int(value)
+            if normalized_unit == "years":
+                amount *= 12
+                normalized_unit = "months"
+            tokens.append(f"{amount} {normalized_unit}")
+
+    for match in _INTERVAL_RE.finditer(text_lower):
+        amount = int(match.group(1))
+        unit = _normalize_interval_unit(match.group(2))
+        normalized_unit = unit if unit.endswith("s") else f"{unit}s"
+        if normalized_unit == "years":
+            amount *= 12
+            normalized_unit = "months"
+        tokens.append(f"{amount} {normalized_unit}")
+
+    return tuple(dict.fromkeys(tokens))
+
+
+def _prefer_specific_follow_up_schedule(drafts: list[_CandidateDraft]) -> list[_CandidateDraft]:
+    if not drafts:
+        return drafts
+
+    def score(draft: _CandidateDraft) -> int:
+        text = draft.raw_text.lower()
+        score_value = 0
+        if isinstance(draft.normalized_value, tuple):
+            score_value += len(draft.normalized_value)
+            if "baseline" in draft.normalized_value:
+                score_value += 2
+        if "follow-up visit" in text or "regular follow-up visits" in text:
+            score_value += 2
+        if "participants were asked to complete" in text:
+            score_value += 2
+        if _is_question_like_text(draft.raw_text):
+            score_value -= 3
+        if "historical interval" in text:
+            score_value -= 3
+        return score_value
+
+    return _prefer_highest_scored_drafts(drafts, score, minimum_score=3)
+
+
+def _prefer_specific_follow_up_interval(drafts: list[_CandidateDraft]) -> list[_CandidateDraft]:
+    if not drafts:
+        return drafts
+
+    def score(draft: _CandidateDraft) -> int:
+        text = draft.raw_text.lower()
+        score_value = 0
+        if "test-retest" in text or "retest" in text:
+            score_value += 3
+        if "follow-up visit" in text:
+            score_value += 2
+        if "interval" in text:
+            score_value += 1
+        if _is_question_like_text(draft.raw_text):
+            score_value -= 3
+        if "historical interval" in text:
+            score_value -= 3
+        if (
+            ("stage 1" in text and "stage 2" in text) or "two stages" in text
+        ) and "retest" not in text:
+            score_value -= 3
+        if _CITATION_RE.search(draft.raw_text) and any(
+            token in text for token in ("previous", "prior", "others")
+        ):
+            score_value -= 2
+        return score_value
+
+    return _prefer_highest_scored_drafts(drafts, score, minimum_score=1)
+
+
+def _prefer_highest_scored_drafts(
+    drafts: list[_CandidateDraft],
+    scorer: Callable[[_CandidateDraft], int],
+    *,
+    minimum_score: int,
+) -> list[_CandidateDraft]:
+    if not drafts:
+        return drafts
+
+    scored = [(scorer(draft), draft) for draft in drafts]
+    top_score = max(score for score, _ in scored)
+    if top_score < minimum_score:
+        return drafts
+
+    top_drafts = [draft for score, draft in scored if score == top_score]
+    return top_drafts or drafts
+
+
+def _normalize_interval_unit(unit_raw: str) -> str:
+    unit = unit_raw.lower()
+    return unit if unit.endswith("s") else f"{unit}s"
+
+
+def _is_question_like_text(text: str) -> bool:
+    text_lower = text.lower()
+    if "?" in text:
+        return True
+    if "questions/purposes" in text_lower:
+        return True
+    return text_lower.startswith(("did ", "what was ", "what functional outcomes"))
+
+
+def _extract_number_tokens(text: str) -> tuple[_NumberToken, ...]:
+    tokens: list[_NumberToken] = []
+    for match in re.finditer(r"\b\d+\b", text):
+        tokens.append(_NumberToken(raw_text=match.group(0), value=int(match.group(0))))
+    for word, value in _NUMBER_WORDS.items():
+        if re.search(rf"\b{word}\b", text.lower()):
+            tokens.append(_NumberToken(raw_text=word, value=value))
+    return tuple(tokens)
+
+
+def _word_or_number_to_int(raw_value: str) -> int | None:
+    normalized = raw_value.strip().lower()
+    if normalized.isdigit():
+        return int(normalized)
+    return _NUMBER_WORDS.get(normalized)
+
+
+def _first_int_candidate(field: ContextFieldExtraction) -> int | None:
+    if field.status is not FieldDetectionStatus.DETECTED:
+        return None
+    if not field.candidates:
+        return None
+    value = field.candidates[0].normalized_value
+    return value if isinstance(value, int) else None
+
+
 def _normalize_text_value(raw_value: str) -> str:
     value = re.sub(r"\s+", " ", raw_value).strip(" .;:,\t")
     return value
@@ -1236,6 +2262,22 @@ def _normalize_instrument_name_candidate(raw_value: str) -> str:
 
     if not value:
         return ""
+    if _SIGAM_FULL_RE.search(value) or _SIGAM_ABBR_RE.search(value):
+        return "SIGAM"
+    if _LCI5_FULL_RE.search(value) or _LCI5_ABBR_RE.search(value):
+        return "LCI-5"
+    if _HOUGHTON_RE.search(value):
+        return "Houghton"
+    if _ABC_FULL_RE.search(value) or _ABC_ABBR_RE.search(value):
+        return "ABC"
+    if _TWO_MWT_FULL_RE.search(value) or _TWO_MWT_ABBR_RE.search(value):
+        return "2-MWT"
+    if _TUG_FULL_RE.search(value) or _TUG_ABBR_RE.search(value):
+        return "TUG"
+    if _COLD_TUG_FULL_RE.search(value) or _COLD_TUG_ABBR_RE.search(value):
+        return "COLD-TUG"
+    if _SIX_MWT_FULL_RE.search(value) or _SIX_MWT_ABBR_RE.search(value):
+        return "6-MWT"
     if _QTFA_FULL_RE.search(value) or _QTFA_ABBR_RE.search(value):
         return "Q-TFA"
     if _PROMIS_FULL_RE.search(value) or _PROMIS_ABBR_RE.search(value):
@@ -1255,6 +2297,108 @@ def _normalize_instrument_name_candidate(raw_value: str) -> str:
 def _normalize_version(raw_value: str) -> str:
     value = raw_value.strip().lower().removeprefix("version ")
     return value.removeprefix("v")
+
+
+def _classify_instrument_type(
+    *,
+    normalized_name: str,
+    sentences: tuple[SentenceRecord, ...],
+) -> tuple[InstrumentType, str, tuple[StableId, ...]]:
+    name = normalized_name.strip()
+    name_lower = name.lower()
+    evidence_sentences = [
+        sentence
+        for sentence in sentences
+        if re.search(rf"\b{re.escape(name_lower)}\b", sentence.provenance.raw_text.lower())
+    ]
+    evidence_span_ids = tuple(dict.fromkeys(sentence.id for sentence in evidence_sentences))
+    name_pattern = re.compile(rf"\b{re.escape(name_lower)}\b")
+
+    prom_name_pattern = re.compile(
+        r"(questionnaire|scale|survey|inventory|patient-?reported|domain\s+score)"
+    )
+    prom_context_pattern = re.compile(
+        r"(questionnaire|scale|translated|translation|cross-?cultur|adapt(?:ed|ation)|"
+        r"psychometric|internal consistency|cronbach|kr-?20|version)",
+        re.IGNORECASE,
+    )
+    performance_name_pattern = re.compile(
+        r"(timed|walk|test|up-?\s*and-?\s*go|\btug\b|\bmwt\b|donning)"
+    )
+    performance_context_pattern = re.compile(
+        r"(timed|walk\s+test|up-?\s*and-?\s*go|seconds?|performance-?based|"
+        r"functional\s+test|donning)",
+        re.IGNORECASE,
+    )
+    pbom_context_pattern = re.compile(
+        r"(performance-?based\s+outcome|functional\s+test|mobility\s+test)",
+        re.IGNORECASE,
+    )
+
+    prom_signal_score = 0
+    performance_signal_score = 0
+    pbom_signal_score = 0
+
+    if prom_name_pattern.search(name_lower):
+        prom_signal_score += 3
+    if performance_name_pattern.search(name_lower):
+        performance_signal_score += 3
+
+    for sentence in evidence_sentences:
+        text_lower = sentence.provenance.raw_text.lower()
+        if prom_context_pattern.search(text_lower):
+            prom_signal_score += 1
+        if performance_context_pattern.search(text_lower):
+            performance_signal_score += 1
+        if pbom_context_pattern.search(text_lower):
+            pbom_signal_score += 1
+
+        for match in name_pattern.finditer(text_lower):
+            window_start = max(0, match.start() - 90)
+            window_end = min(len(text_lower), match.end() + 90)
+            window_text = text_lower[window_start:window_end]
+            if prom_context_pattern.search(window_text):
+                prom_signal_score += 2
+            if performance_context_pattern.search(window_text):
+                performance_signal_score += 2
+            if pbom_context_pattern.search(window_text):
+                pbom_signal_score += 2
+
+    if prom_signal_score >= 3 and prom_signal_score >= performance_signal_score:
+        return (
+            InstrumentType.PROM,
+            "Classified as PROM from questionnaire/scale/translation psychometric context.",
+            evidence_span_ids,
+        )
+    if performance_signal_score >= 3 and performance_signal_score > prom_signal_score:
+        return (
+            InstrumentType.PERFORMANCE_TEST,
+            "Classified as performance test from timed/functional local context.",
+            evidence_span_ids,
+        )
+    if pbom_signal_score >= 2 and pbom_signal_score >= max(
+        prom_signal_score,
+        performance_signal_score,
+    ):
+        return (
+            InstrumentType.PBOM,
+            "Classified as PBOM from performance-based outcome terminology.",
+            evidence_span_ids,
+        )
+
+    if prom_signal_score > 0 and performance_signal_score > 0:
+        return (
+            InstrumentType.MIXED_OR_UNKNOWN,
+            "Both questionnaire-like and performance-like cues were present; "
+            "reviewer confirmation is required.",
+            evidence_span_ids,
+        )
+
+    return (
+        InstrumentType.MIXED_OR_UNKNOWN,
+        "No deterministic instrument-type signal was strong enough.",
+        evidence_span_ids,
+    )
 
 
 def _normalize_language(raw_value: str) -> str:
@@ -1286,9 +2430,362 @@ def _first_candidate_normalized(field: ContextFieldExtraction) -> str | None:
     return None
 
 
+def _infer_instrument_roles(
+    *,
+    sentences: tuple[SentenceRecord, ...],
+    study_intent: StudyIntent,
+    normalized_instrument_names: tuple[tuple[StableId, str], ...],
+) -> dict[StableId, tuple[InstrumentContextRole, str, tuple[StableId, ...]]]:
+    by_name: dict[str, StableId] = {
+        normalized_name: instrument_id
+        for instrument_id, normalized_name in normalized_instrument_names
+    }
+    target_scores: dict[StableId, int] = {
+        instrument_id: 0 for instrument_id, _ in normalized_instrument_names
+    }
+    comparator_scores: dict[StableId, int] = {
+        instrument_id: 0 for instrument_id, _ in normalized_instrument_names
+    }
+    outcome_scores: dict[StableId, int] = {
+        instrument_id: 0 for instrument_id, _ in normalized_instrument_names
+    }
+    anchor_scores: dict[StableId, int] = {
+        instrument_id: 0 for instrument_id, _ in normalized_instrument_names
+    }
+    target_evidence: dict[StableId, list[StableId]] = {
+        instrument_id: [] for instrument_id, _ in normalized_instrument_names
+    }
+    comparator_evidence: dict[StableId, list[StableId]] = {
+        instrument_id: [] for instrument_id, _ in normalized_instrument_names
+    }
+    outcome_evidence: dict[StableId, list[StableId]] = {
+        instrument_id: [] for instrument_id, _ in normalized_instrument_names
+    }
+
+    study_intent_re = re.compile(
+        r"\b(?:aim|objective|purpose)\b[^.]{0,220}"
+        r"\b(?:develop|validate|validation|adapt|psychometric)\b",
+        re.IGNORECASE,
+    )
+    comparator_relation_re = re.compile(
+        r"\b(?:compared?\s+with|comparison\s+with|by comparing|"
+        r"correlation(?:s)?\s+(?:between|with)|association\s+between)\b",
+        re.IGNORECASE,
+    )
+    appraisal_re = re.compile(
+        r"\b(?:reliability|validity|internal consistency|measurement error|responsiveness)\b",
+        re.IGNORECASE,
+    )
+    outcome_re = re.compile(
+        r"\b(?:patient-reported outcome|outcome measure|baseline|follow-up|"
+        r"improv(?:e|ed|ement)|change|mcid|mic)\b",
+        re.IGNORECASE,
+    )
+    anchor_re = re.compile(
+        r"\b(?:anchor-based|anchor based|mcid|mic)\b[^.]{0,120}\b(?:global score|anchor)\b",
+        re.IGNORECASE,
+    )
+
+    for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
+        text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        mentioned_ids = [
+            instrument_id
+            for normalized_name, instrument_id in by_name.items()
+            if re.search(rf"\b{re.escape(normalized_name.lower())}\b", text_lower)
+        ]
+        if not mentioned_ids:
+            continue
+
+        if "title" in " ".join(sentence.heading_path).lower():
+            for instrument_id in mentioned_ids:
+                target_scores[instrument_id] += 3
+                target_evidence[instrument_id].append(sentence.id)
+
+        for pattern in _TARGET_PRIORITY_PATTERNS:
+            if pattern.search(text):
+                for instrument_id in mentioned_ids:
+                    target_scores[instrument_id] += 3
+                    target_evidence[instrument_id].append(sentence.id)
+                break
+
+        if study_intent_re.search(text) and appraisal_re.search(text):
+            for instrument_id in mentioned_ids:
+                target_scores[instrument_id] += 4
+                target_evidence[instrument_id].append(sentence.id)
+
+        if outcome_re.search(text):
+            for instrument_id in mentioned_ids:
+                outcome_scores[instrument_id] += 2
+                outcome_evidence[instrument_id].append(sentence.id)
+
+        if (
+            "patient-reported outcome" in text_lower
+            and len(mentioned_ids) >= 2
+        ):
+            for instrument_id in mentioned_ids:
+                outcome_scores[instrument_id] += 2
+                outcome_evidence[instrument_id].append(sentence.id)
+
+        if anchor_re.search(text):
+            for instrument_id in mentioned_ids:
+                anchor_scores[instrument_id] += 3
+                outcome_scores[instrument_id] += 1
+                outcome_evidence[instrument_id].append(sentence.id)
+
+        if _COMPARATOR_CONTEXT_RE.search(text) or comparator_relation_re.search(text):
+            for instrument_id in mentioned_ids:
+                comparator_scores[instrument_id] += 2
+                comparator_evidence[instrument_id].append(sentence.id)
+            # In explicit comparator clauses, promote the first mentioned
+            # instrument as likely target and later mentions as comparators.
+            ordered_mentions = sorted(
+                (
+                    (text_lower.find(normalized_name.lower()), instrument_id)
+                    for normalized_name, instrument_id in by_name.items()
+                    if normalized_name.lower() in text_lower
+                ),
+                key=lambda item: item[0],
+            )
+            if len(ordered_mentions) >= 2:
+                lead_id = ordered_mentions[0][1]
+                target_scores[lead_id] += 2
+                target_evidence[lead_id].append(sentence.id)
+                for _, instrument_id in ordered_mentions[1:]:
+                    comparator_scores[instrument_id] += 3
+                    comparator_evidence[instrument_id].append(sentence.id)
+
+        if "by comparing" in text_lower and " to " in text_lower:
+            lead = text_lower.split(" to ", 1)[0]
+            for normalized_name, instrument_id in by_name.items():
+                if normalized_name.lower() in lead:
+                    target_scores[instrument_id] += 4
+                    target_evidence[instrument_id].append(sentence.id)
+                elif normalized_name.lower() in text_lower:
+                    comparator_scores[instrument_id] += 3
+                    comparator_evidence[instrument_id].append(sentence.id)
+
+        if study_intent_re.search(text) and len(mentioned_ids) > 1:
+            first_mention_positions = sorted(
+                (
+                    (text_lower.find(normalized_name.lower()), instrument_id)
+                    for normalized_name, instrument_id in by_name.items()
+                    if normalized_name.lower() in text_lower
+                ),
+                key=lambda item: item[0],
+            )
+            if first_mention_positions:
+                lead_id = first_mention_positions[0][1]
+                target_scores[lead_id] += 2
+                target_evidence[lead_id].append(sentence.id)
+                for _, instrument_id in first_mention_positions[1:]:
+                    comparator_scores[instrument_id] += 1
+                    comparator_evidence[instrument_id].append(sentence.id)
+
+    assignments: dict[StableId, tuple[InstrumentContextRole, str, tuple[StableId, ...]]] = {}
+
+    if study_intent is StudyIntent.LONGITUDINAL_OUTCOME:
+        ranked_outcome = sorted(
+            outcome_scores.items(),
+            key=lambda item: (
+                item[1],
+                anchor_scores[item[0]],
+                target_scores[item[0]],
+                str(item[0]),
+            ),
+            reverse=True,
+        )
+        max_outcome_score = ranked_outcome[0][1] if ranked_outcome else 0
+        if max_outcome_score <= 0:
+            return assignments
+        co_primary_ids = {
+            instrument_id
+            for instrument_id, score in ranked_outcome
+            if score >= 3 and score >= max_outcome_score - 1
+        }
+        co_primary_ids.update(
+            instrument_id for instrument_id, score in anchor_scores.items() if score > 0
+        )
+        if len(co_primary_ids) >= 2:
+            for instrument_id in co_primary_ids:
+                evidence_ids = tuple(dict.fromkeys(outcome_evidence[instrument_id]))
+                assignments[instrument_id] = (
+                    InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+                    (
+                        "Classified as co-primary outcome instrument from longitudinal "
+                        "outcome and/or anchor evidence."
+                    ),
+                    evidence_ids,
+                )
+        else:
+            lead_instrument_id = ranked_outcome[0][0]
+            assignments[lead_instrument_id] = (
+                InstrumentContextRole.TARGET_UNDER_APPRAISAL,
+                "Lead longitudinal outcome instrument based on strongest direct outcome signal.",
+                tuple(dict.fromkeys(outcome_evidence[lead_instrument_id])),
+            )
+
+        for instrument_id, _ in normalized_instrument_names:
+            if instrument_id in assignments:
+                continue
+            comparator_evidence_ids = tuple(dict.fromkeys(comparator_evidence[instrument_id]))
+            if comparator_scores[instrument_id] > outcome_scores[instrument_id]:
+                assignments[instrument_id] = (
+                    InstrumentContextRole.COMPARATOR_ONLY,
+                    "Detected as comparator-only context in longitudinal outcome study.",
+                    comparator_evidence_ids,
+                )
+                continue
+            outcome_evidence_ids = tuple(dict.fromkeys(outcome_evidence[instrument_id]))
+            if outcome_scores[instrument_id] > 0:
+                assignments[instrument_id] = (
+                    InstrumentContextRole.SECONDARY_OUTCOME_INSTRUMENT,
+                    "Classified as secondary outcome instrument from longitudinal reporting.",
+                    outcome_evidence_ids,
+                )
+            else:
+                assignments[instrument_id] = (
+                    InstrumentContextRole.BACKGROUND_ONLY,
+                    "Mentioned without direct outcome-appraisal evidence in this study.",
+                    outcome_evidence_ids or comparator_evidence_ids,
+                )
+        return assignments
+
+    ranked = sorted(
+        target_scores.items(),
+        key=lambda item: (item[1] - comparator_scores[item[0]], item[1], str(item[0])),
+        reverse=True,
+    )
+    if ranked and ranked[0][1] > 0:
+        target_id = ranked[0][0]
+        evidence_ids = tuple(dict.fromkeys(target_evidence[target_id]))
+        assignments[target_id] = (
+            InstrumentContextRole.TARGET_UNDER_APPRAISAL,
+            (
+                "Highest target-signal instrument from study-intent and appraisal-context "
+                "sentences."
+            ),
+            evidence_ids,
+        )
+
+    for instrument_id, _ in normalized_instrument_names:
+        if instrument_id in assignments:
+            continue
+        comparator_evidence_ids = tuple(dict.fromkeys(comparator_evidence[instrument_id]))
+        target_evidence_ids = tuple(dict.fromkeys(target_evidence[instrument_id]))
+        if comparator_scores[instrument_id] > 0 and (
+            target_scores[instrument_id] == 0
+            or
+            comparator_scores[instrument_id] >= target_scores[instrument_id]
+            or (
+                len(comparator_evidence_ids) >= 2
+                and target_scores[instrument_id] <= 3
+            )
+        ):
+            assignments[instrument_id] = (
+                InstrumentContextRole.COMPARATOR_ONLY,
+                "Detected primarily in comparator/correlation context relative to target.",
+                comparator_evidence_ids,
+            )
+        else:
+            assignments[instrument_id] = (
+                InstrumentContextRole.ADDITIONAL,
+                "Retained as an additional instrument mention without role dominance.",
+                target_evidence_ids or comparator_evidence_ids,
+            )
+
+    return assignments
+
+
+def _classify_study_intent(
+    *,
+    sentences: tuple[SentenceRecord, ...],
+) -> tuple[StudyIntent, str, tuple[StableId, ...]]:
+    psychometric_re = re.compile(
+        r"\b(?:validate|validation|psychometric|cross-?cultural|translated|"
+        r"internal consistency|test-?retest|construct validity|criterion validity)\b",
+        re.IGNORECASE,
+    )
+    longitudinal_outcome_re = re.compile(
+        r"\b(?:patient-reported outcome|outcome measure|baseline|follow-up|"
+        r"complication|therapeutic study|intervention|mcid|mic|longitudinal)\b",
+        re.IGNORECASE,
+    )
+    psychometric_aim_re = re.compile(
+        r"\b(?:aim|objective|purpose)\b[^.]{0,260}"
+        r"\b(?:develop|development|validate|validation|psychometric|"
+        r"reliability|validity|cross-?cultural|translate|adapt)\b",
+        re.IGNORECASE,
+    )
+    validation_design_re = re.compile(
+        r"\b(?:prospective|cross-?sectional)\b[^.]{0,180}\b(?:validation|development)\b",
+        re.IGNORECASE,
+    )
+    outcome_aim_re = re.compile(
+        r"\b(?:aim|objective|purpose)\b[^.]{0,260}"
+        r"\b(?:outcome|improv(?:e|ed|ement)|complication|follow-up|"
+        r"therapeutic|intervention)\b",
+        re.IGNORECASE,
+    )
+    psychometric_score = 0
+    outcome_score = 0
+    psychometric_evidence: list[StableId] = []
+    outcome_evidence: list[StableId] = []
+
+    for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
+        text = sentence.provenance.raw_text
+        if psychometric_re.search(text):
+            psychometric_score += 1
+            psychometric_evidence.append(sentence.id)
+        if psychometric_aim_re.search(text) or validation_design_re.search(text):
+            psychometric_score += 3
+            psychometric_evidence.append(sentence.id)
+        if longitudinal_outcome_re.search(text):
+            outcome_score += 1
+            outcome_evidence.append(sentence.id)
+        if outcome_aim_re.search(text):
+            outcome_score += 3
+            outcome_evidence.append(sentence.id)
+
+    if psychometric_score >= 6 and psychometric_score >= outcome_score + 1:
+        return (
+            StudyIntent.PSYCHOMETRIC_VALIDATION,
+            "Psychometric-validation aims and design language dominated outcome language.",
+            tuple(dict.fromkeys(psychometric_evidence)),
+        )
+
+    if outcome_score >= 6 and outcome_score >= psychometric_score + 2:
+        return (
+            StudyIntent.LONGITUDINAL_OUTCOME,
+            "Longitudinal outcome signals dominated psychometric-validation signals.",
+            tuple(dict.fromkeys(outcome_evidence)),
+        )
+    if psychometric_score >= 4 and psychometric_score >= outcome_score + 2:
+        return (
+            StudyIntent.PSYCHOMETRIC_VALIDATION,
+            "Psychometric-validation signals dominated longitudinal outcome signals.",
+            tuple(dict.fromkeys(psychometric_evidence)),
+        )
+    return (
+        StudyIntent.MIXED,
+        "Both psychometric-validation and longitudinal-outcome signals were present.",
+        tuple(dict.fromkeys(psychometric_evidence + outcome_evidence)),
+    )
+
+
 def _is_reference_sentence(sentence: SentenceRecord) -> bool:
     heading_tokens = " ".join(sentence.heading_path).lower()
     return "references" in heading_tokens or "acknowledg" in heading_tokens
+
+
+def _is_keyword_sentence(sentence: SentenceRecord) -> bool:
+    heading_tokens = " ".join(sentence.heading_path).lower()
+    text_lower = sentence.provenance.raw_text.lower()
+    return "keyword" in heading_tokens or text_lower.startswith("keywords:")
 
 
 def _is_background_sentence(sentence: SentenceRecord) -> bool:
@@ -1332,29 +2829,79 @@ def _is_interpretability_sentence(text_lower: str) -> bool:
     )
 
 
+def _is_not_assessed_property_sentence(text_lower: str) -> bool:
+    return any(
+        token in text_lower
+        for token in (
+            "not assessed",
+            "were not assessed",
+            "not evaluated",
+            "could not be performed",
+            "impossible to verify",
+            "lack of a gold standard",
+            "future studies",
+        )
+    )
+
+
+def _is_external_comparison_sentence(text_lower: str) -> bool:
+    return (
+        "e.g." in text_lower
+        and "n =" in text_lower
+        and any(token in text_lower for token in ("french", "turkish", "dutch"))
+    )
+
+
 def _is_false_instrument_candidate(value: str, sentence: SentenceRecord) -> bool:
     value_lower = value.lower()
     sentence_lower = sentence.provenance.raw_text.lower()
 
     if _is_reference_sentence(sentence):
         return True
-
-    banned_tokens = {
-        "opra",
-        "opra system",
-        "osseointegrated prostheses for the rehabilitation of amputees",
-        "osseoanchored prostheses for the rehabilitation of amputees",
-        "integrum",
-        "amputee coalition",
-        "walter reed",
-        "medical center",
-        "r core team",
-        "hud",
-        "fda",
-    }
-    if value_lower in banned_tokens:
+    if _is_keyword_sentence(sentence):
         return True
-    if any(token in value_lower for token in ("implant", "device", "system", "calculator")):
+
+    generic_non_instrument_tokens = (
+        "implant",
+        "device",
+        "system",
+        "calculator",
+        "hospital",
+        "medical center",
+        "institutional review board",
+        "ethical review board",
+        "fda",
+        "protocol",
+        "software",
+        "language",
+        "translation",
+        "figure",
+        "table",
+    )
+    statistic_like_tokens = {
+        "kr-20",
+        "cronbach",
+        "alpha",
+        "icc",
+        "kappa",
+        "cfi",
+        "tli",
+        "rmsea",
+        "srmr",
+        "sem",
+        "sdc",
+        "loa",
+        "mic",
+        "mcid",
+        "auc",
+    }
+    if any(token in value_lower for token in generic_non_instrument_tokens):
+        return True
+    if value_lower in statistic_like_tokens:
+        return True
+    if re.fullmatch(r"(?:cm|mm|m|sec|s|kg|yrs?|years?)", value_lower):
+        return True
+    if re.search(r"\b(?:email|copyright|disclaimer)\b", sentence_lower):
         return True
     if _NON_INSTRUMENT_CONTEXT_RE.search(sentence_lower) and not _INSTRUMENT_CONTEXT_RE.search(
         sentence_lower

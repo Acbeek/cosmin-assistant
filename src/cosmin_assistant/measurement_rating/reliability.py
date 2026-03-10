@@ -32,11 +32,11 @@ def rate_reliability(
     instrument_id: StableId,
     statistic_candidates: tuple[StatisticCandidate, ...],
 ) -> MeasurementPropertyRatingResult:
-    """Rate reliability from ICC and weighted-kappa statistics."""
+    """Rate reliability from ICC and kappa-family statistics."""
 
     relevant = select_statistics(
         statistic_candidates,
-        (StatisticType.ICC, StatisticType.WEIGHTED_KAPPA),
+        (StatisticType.ICC, StatisticType.WEIGHTED_KAPPA, StatisticType.KAPPA),
     )
     raw_results = to_raw_result_records(relevant)
     comparisons = _build_comparisons(relevant)
@@ -64,6 +64,7 @@ def rate_reliability(
             "statistic_types_considered": [
                 StatisticType.ICC.value,
                 StatisticType.WEIGHTED_KAPPA.value,
+                StatisticType.KAPPA.value,
             ],
             "threshold": _RELIABILITY_THRESHOLD_EXPRESSION,
             "num_relevant_statistics": len(relevant),
@@ -82,13 +83,22 @@ def _build_comparisons(
     comparisons: list[ThresholdComparison] = []
     for candidate in candidates:
         value = candidate.value_normalized
-        if isinstance(value, float):
+        note: str | None = None
+        if candidate.statistic_type is StatisticType.KAPPA and (
+            "cohen" not in candidate.surrounding_text.lower()
+            and "weighted" not in candidate.surrounding_text.lower()
+        ):
+            outcome = ThresholdComparisonOutcome.NOT_EVALUABLE
+            note = (
+                "kappa type was not explicit (weighted vs unweighted); reviewer confirmation "
+                "is required"
+            )
+        elif isinstance(value, float):
             outcome = (
                 ThresholdComparisonOutcome.MEETS
                 if value >= 0.70
                 else ThresholdComparisonOutcome.FAILS
             )
-            note: str | None = None
         else:
             outcome = ThresholdComparisonOutcome.NOT_EVALUABLE
             note = "normalized reliability statistic is not numeric"
@@ -112,7 +122,7 @@ def _compute_rating(
     if not comparisons:
         return (
             MeasurementPropertyRating.INDETERMINATE,
-            "No ICC or weighted-kappa statistics were available for reliability rating.",
+            "No ICC/kappa reliability statistics were available for reliability rating.",
             UncertaintyStatus.MISSING_EVIDENCE,
             ReviewerDecisionStatus.PENDING,
         )

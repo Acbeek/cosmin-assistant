@@ -8,11 +8,25 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from cosmin_assistant import __version__
+from cosmin_assistant.models import PropertyActivationStatus
 from cosmin_assistant.review import provisional_review_state
 from cosmin_assistant.tables.docx_stub import ProvisionalDocxExporter
+from cosmin_assistant.utils import (
+    git_commit_if_available,
+    python_version_string,
+    repo_root_from_file,
+)
 
 if TYPE_CHECKING:
     from cosmin_assistant.cli.pipeline import ProvisionalAssessmentRun
+
+_SUMMARY_INCLUDED_STATUSES: tuple[PropertyActivationStatus, ...] = (
+    PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE,
+    PropertyActivationStatus.MEASUREMENT_ERROR_SUPPORT_ONLY,
+    PropertyActivationStatus.INTERPRETABILITY_ONLY,
+    PropertyActivationStatus.REVIEWER_REQUIRED,
+)
 
 
 def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) -> dict[str, str]:
@@ -20,6 +34,8 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
+    manifest_path = out_path / "run_manifest.json"
+    _guard_against_stale_outputs(manifest_path=manifest_path, run=run)
 
     evidence_path = out_path / "evidence.json"
     rob_path = out_path / "rob_assessment.json"
@@ -32,6 +48,17 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
     review_overrides_path = out_path / "review_overrides.json"
     adjudication_notes_path = out_path / "adjudication_notes.json"
     review_state_path = out_path / "review_state.json"
+
+    manifest_payload = {
+        "python_version": python_version_string(),
+        "package_version": __version__,
+        "git_commit_if_available": git_commit_if_available(repo_root_from_file(run.article_path)),
+        "profile": run.profile_type.value,
+        "source_article_path": run.article_path,
+        "source_article_hash": run.source_article_hash,
+        "generated_at_utc": run.generated_at_utc,
+    }
+    _write_json(manifest_path, manifest_payload)
 
     evidence_payload = {
         "profile": run.profile_type.value,
@@ -79,6 +106,7 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
         "review_overrides_json": str(review_overrides_path),
         "adjudication_notes_json": str(adjudication_notes_path),
         "review_state_json": str(review_state_path),
+        "run_manifest_json": str(manifest_path),
     }
 
 
@@ -101,23 +129,55 @@ def _build_summary_markdown(run: ProvisionalAssessmentRun) -> str:
 
     lines.append("")
     lines.append("## Measurement Property Ratings")
-    for result in run.measurement_property_results:
+    summary_results = [
+        result
+        for result in run.measurement_property_results
+        if result.activation_status in _SUMMARY_INCLUDED_STATUSES
+    ]
+    suppressed_measurement = len(run.measurement_property_results) - len(summary_results)
+    for result in summary_results:
         lines.append(
-            f"- `{result.measurement_property}`: `{result.computed_rating.value}` "
-            f"(rule `{result.rule_name}`)"
+            f"- `{result.instrument_id}` / `{result.measurement_property}`: "
+            f"`{result.computed_rating.value}` "
+            f"(rule `{result.rule_name}`; activation_status=`{result.activation_status.value}`)"
+        )
+    if suppressed_measurement > 0:
+        lines.append(
+            f"- Suppressed `{suppressed_measurement}` non-assessed/indirect/not-applicable "
+            "measurement rows for readability."
         )
 
     lines.append("")
     lines.append("## Synthesis")
-    for synthesis in run.synthesis_results:
+    summary_synthesis = [
+        synthesis
+        for synthesis in run.synthesis_results
+        if synthesis.activation_status in _SUMMARY_INCLUDED_STATUSES
+    ]
+    suppressed_synthesis = len(run.synthesis_results) - len(summary_synthesis)
+    for synthesis in summary_synthesis:
         lines.append(
-            f"- `{synthesis.measurement_property}`: `{synthesis.summary_rating.value}` "
-            f"(total_n={synthesis.total_sample_size})"
+            f"- `{synthesis.instrument_name}` / `{synthesis.measurement_property}`: "
+            f"`{synthesis.summary_rating.value}` "
+            f"(total_n={synthesis.total_sample_size}; "
+            f"activation_status=`{synthesis.activation_status.value}`)"
+        )
+    if suppressed_synthesis > 0:
+        lines.append(
+            f"- Suppressed `{suppressed_synthesis}` non-assessed/indirect/not-applicable "
+            "synthesis rows for readability."
         )
 
     lines.append("")
     lines.append("## Modified GRADE")
     for grade in run.grade_results:
+        if not grade.grade_executed:
+            lines.append(
+                f"- `{grade.measurement_property}`: `not_graded` "
+                f"(activation_status=`{grade.activation_status.value}`; "
+                f"reason={grade.explanation})"
+            )
+            continue
         lines.append(
             f"- `{grade.measurement_property}`: `{grade.starting_certainty.value}` -> "
             f"`{grade.final_certainty.value}` (downgrade_steps={grade.total_downgrade_steps})"
@@ -134,7 +194,10 @@ def _build_per_study_dataframe(run: ProvisionalAssessmentRun) -> pd.DataFrame:
         for bundle in run.rob_assessments
     }
     grade_by_property = {
-        result.measurement_property: result.final_certainty.value for result in run.grade_results
+        result.measurement_property: (
+            result.final_certainty.value if result.grade_executed else "not_graded"
+        )
+        for result in run.grade_results
     }
 
     rows = []
@@ -153,6 +216,25 @@ def _build_per_study_dataframe(run: ProvisionalAssessmentRun) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _guard_against_stale_outputs(*, manifest_path: Path, run: ProvisionalAssessmentRun) -> None:
+    if not manifest_path.exists():
+        return
+
+    try:
+        prior = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return
+
+    prior_path = prior.get("source_article_path")
+    prior_hash = prior.get("source_article_hash")
+    if prior_path == run.article_path and prior_hash and prior_hash != run.source_article_hash:
+        msg = (
+            "Output directory contains stale artifacts for the same source path but a different "
+            "article hash. Use a new output directory or remove old outputs."
+        )
+        raise ValueError(msg)
 
 
 def _write_json(path: Path, payload: object) -> None:

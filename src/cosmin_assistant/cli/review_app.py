@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 from cosmin_assistant.review import apply_review_request_file
+from cosmin_assistant.utils import ensure_supported_python
 
 app = typer.Typer(add_completion=False)
 
@@ -62,6 +63,11 @@ def main(
     """Apply reviewer overrides to provisional COSMIN outputs."""
 
     try:
+        ensure_supported_python()
+    except RuntimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    try:
         output_paths = apply_review_request_file(
             provisional_dir=provisional_dir,
             review_file=review_file,
@@ -79,6 +85,7 @@ def main(
 def run_review() -> None:
     """Console-script entry point for review override CLI."""
 
+    ensure_supported_python()
     app()
 
 

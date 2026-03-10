@@ -11,7 +11,7 @@ from cosmin_assistant.grade.models import (
     ModifiedGradeDomain,
     ModifiedGradeResult,
 )
-from cosmin_assistant.models import EvidenceCertaintyLevel, StableId
+from cosmin_assistant.models import EvidenceCertaintyLevel, PropertyActivationStatus, StableId
 from cosmin_assistant.synthesize import SynthesisAggregateResult
 
 STARTING_CERTAINTY = EvidenceCertaintyLevel.HIGH
@@ -139,6 +139,8 @@ def apply_modified_grade(
         downgrade_records=tuple(records),
         evidence_span_ids=evidence_span_ids,
         explanation=explanation,
+        activation_status=PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE,
+        grade_executed=True,
     )
 
 

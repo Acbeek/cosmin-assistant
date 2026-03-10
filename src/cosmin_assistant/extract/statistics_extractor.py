@@ -24,15 +24,49 @@ _DECIMAL = r"-?(?:\d+(?:\.\d+)?|\.\d+)"
 _SINGLE_VALUE_PATTERNS: tuple[tuple[StatisticType, re.Pattern[str]], ...] = (
     (
         StatisticType.CRONBACH_ALPHA,
-        re.compile(rf"(?:cronbach(?:'s)?\s*alpha|α)\s*(?:=|:)?\s*({_DECIMAL})", re.IGNORECASE),
+        re.compile(
+            rf"(?:cronbach(?:'s)?\s*alpha|α)\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        StatisticType.KR20,
+        re.compile(
+            rf"(?:kuder-?richardson(?:\s*formula)?\s*20|kr-?20(?:\s*coefficient)?)"
+            rf"\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            re.IGNORECASE,
+        ),
     ),
     (
         StatisticType.ICC,
-        re.compile(rf"\bICC(?:\s*\([^)]+\))?\s*(?:=|:)?\s*({_DECIMAL})", re.IGNORECASE),
+        re.compile(
+            rf"\bICC(?:\s*[\]\)\}}])?(?:\s*\([^)]+\))?\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        StatisticType.ICC,
+        re.compile(
+            rf"\b(?:intra|inter)class\s+correlation\s+coefficient(?:s)?"
+            rf"(?:\s*\[[^\]]+\])?\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            re.IGNORECASE,
+        ),
     ),
     (
         StatisticType.WEIGHTED_KAPPA,
-        re.compile(rf"(?:weighted\s*kappa|κw)\s*(?:=|:)?\s*({_DECIMAL})", re.IGNORECASE),
+        re.compile(
+            rf"(?:weighted\s*kappa|weighted\s+cohen(?:'s)?\s*kappa|κw)"
+            rf"\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        StatisticType.KAPPA,
+        re.compile(
+            rf"(?:cohen(?:'s)?\s+kappa(?:\s+coefficient)?|kappa\s+coefficient|κ)"
+            rf"\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            re.IGNORECASE,
+        ),
     ),
     (
         StatisticType.SEM,
@@ -45,7 +79,7 @@ _SINGLE_VALUE_PATTERNS: tuple[tuple[StatisticType, re.Pattern[str]], ...] = (
     (
         StatisticType.MIC,
         re.compile(
-            rf"\b(?:MIC|MCID|MID)\b[^\d-]{{0,40}}"
+            rf"\b(?:MIC|MCID|MID)\b(?!\s*\(\s*n\s*=)[^\d-]{{0,40}}"
             rf"(?:=|:|to\s+be|was|is|of|calculated\s+as)\s*({_DECIMAL})",
             re.IGNORECASE,
         ),
@@ -93,6 +127,24 @@ _SUBGROUP_TOKEN_PATTERN = re.compile(
     r"\b(men|women|male|female|adolescents|adults)\b",
     re.IGNORECASE,
 )
+_SIGAM_FULL_RE = re.compile(r"special\s+interest\s+group\s+in\s+amputee\s+medicine", re.IGNORECASE)
+_SIGAM_ABBR_RE = re.compile(r"\bsigam\b", re.IGNORECASE)
+_LCI5_FULL_RE = re.compile(r"locomotor\s+capabilities\s+index-?5", re.IGNORECASE)
+_LCI5_ABBR_RE = re.compile(r"\blci-?5\b", re.IGNORECASE)
+_HOUGHTON_RE = re.compile(r"\bhoughton(?:\s+scale)?\b", re.IGNORECASE)
+_ABC_FULL_RE = re.compile(r"activities-?specific\s+balance\s+confidence", re.IGNORECASE)
+_ABC_ABBR_RE = re.compile(r"\babc(?:\s+scale)?\b", re.IGNORECASE)
+_TWO_MWT_FULL_RE = re.compile(r"two-?minute\s+walk\s+test", re.IGNORECASE)
+_TWO_MWT_ABBR_RE = re.compile(r"\b2-?mwt\b", re.IGNORECASE)
+_TUG_FULL_RE = re.compile(r"timed\s+up\s+and\s+go", re.IGNORECASE)
+_TUG_ABBR_RE = re.compile(r"\btug(?:\s+test)?\b", re.IGNORECASE)
+_COLD_TUG_FULL_RE = re.compile(
+    r"colorado\s+limb\s+donning[- ]timed\s+up\s+and\s+go",
+    re.IGNORECASE,
+)
+_COLD_TUG_ABBR_RE = re.compile(r"\bcold-?tug\b", re.IGNORECASE)
+_SIX_MWT_FULL_RE = re.compile(r"\b6[- ]?minute\s+walk\s+test\b", re.IGNORECASE)
+_SIX_MWT_ABBR_RE = re.compile(r"\b6[- ]?mwt\b", re.IGNORECASE)
 _QTFA_ABBR_RE = re.compile(r"\bq\s*-?\s*tfa(?:\b|(?=[A-Za-z]))", re.IGNORECASE)
 _QTFA_FULL_RE = re.compile(
     r"questionnaire\s+for\s+persons\s+with\s+a\s+transfemoral\s+amputation",
@@ -117,6 +169,16 @@ _CHANGE_TERM_RE = re.compile(
     r"\b(change|changed|improv(?:e|ed|ement)|difference|mean\s+difference|increase|decrease)\b",
     re.IGNORECASE,
 )
+_NOT_ASSESSED_RE = re.compile(
+    r"\b(not assessed|were not assessed|not evaluated|"
+    r"impossible to verify|lack of a gold standard)\b",
+    re.IGNORECASE,
+)
+_COMPARATOR_CONTEXT_RE = re.compile(
+    r"\b(by comparing|compared with|correlation between|correlations? of|"
+    r"association between|with the)\b",
+    re.IGNORECASE,
+)
 
 
 def extract_statistics_from_markdown_file(
@@ -136,11 +198,16 @@ def extract_statistics_from_parsed_document(
     candidates: list[StatisticCandidate] = []
     seen: set[tuple[object, ...]] = set()
     paragraph_method_labels = _build_paragraph_method_labels(parsed.sentences)
+    paragraph_instrument_hints = _build_paragraph_instrument_hints(parsed.sentences)
 
     for sentence in parsed.sentences:
         text = sentence.provenance.raw_text
         subgroup_label = _detect_subgroup_label(text)
-        instrument_hints = _detect_instrument_hints(text)
+        instrument_hints = _merge_instrument_hints(
+            _detect_instrument_hints(text),
+            paragraph_instrument_hints.get(sentence.parent_paragraph_id, ()),
+        )
+        comparator_hints = _detect_comparator_instrument_hints(text)
         sentence_method_labels = _merge_method_labels(
             _detect_method_labels(text),
             paragraph_method_labels.get(sentence.parent_paragraph_id, ()),
@@ -152,6 +219,7 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
         _extract_loa(
@@ -161,6 +229,7 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
         _extract_dif_findings(
@@ -170,6 +239,7 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
         _extract_measurement_invariance(
@@ -179,6 +249,7 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
         _extract_known_groups_or_comparator(
@@ -188,6 +259,7 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
         _extract_responsiveness_related(
@@ -197,6 +269,7 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
         _extract_measurement_error_support_mentions(
@@ -205,6 +278,7 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
         _extract_longitudinal_responsiveness_candidate(
@@ -213,14 +287,23 @@ def extract_statistics_from_parsed_document(
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
+
+    direct_ids, background_ids, interpretability_ids, comparator_ids = _partition_candidate_ids(
+        candidates
+    )
 
     return ArticleStatisticsExtractionResult(
         id=_stable_id("stats", parsed.id, parsed.file_path),
         article_id=parsed.id,
         file_path=parsed.file_path,
         candidates=tuple(candidates),
+        direct_current_study_ids=direct_ids,
+        background_citation_ids=background_ids,
+        interpretability_support_ids=interpretability_ids,
+        comparator_instrument_context_ids=comparator_ids,
     )
 
 
@@ -231,6 +314,7 @@ def _extract_single_value_stats(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
@@ -249,6 +333,7 @@ def _extract_single_value_stats(
                 subgroup_label=subgroup_label,
                 surrounding_text=text,
                 instrument_hints=instrument_hints,
+                comparator_hints=comparator_hints,
                 method_labels=sentence_method_labels,
                 candidates=candidates,
                 seen=seen,
@@ -263,6 +348,7 @@ def _extract_loa(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
@@ -281,6 +367,7 @@ def _extract_loa(
             subgroup_label=subgroup_label,
             surrounding_text=text,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             method_labels=sentence_method_labels,
             candidates=candidates,
             seen=seen,
@@ -295,6 +382,7 @@ def _extract_dif_findings(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
@@ -312,6 +400,7 @@ def _extract_dif_findings(
             subgroup_label=subgroup_label,
             surrounding_text=text,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             method_labels=sentence_method_labels,
             candidates=candidates,
             seen=seen,
@@ -327,6 +416,7 @@ def _extract_dif_findings(
             subgroup_label=subgroup_label,
             surrounding_text=text,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             method_labels=sentence_method_labels,
             candidates=candidates,
             seen=seen,
@@ -341,6 +431,7 @@ def _extract_measurement_invariance(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
@@ -363,6 +454,7 @@ def _extract_measurement_invariance(
         subgroup_label=subgroup_label,
         surrounding_text=text,
         instrument_hints=instrument_hints,
+        comparator_hints=comparator_hints,
         method_labels=sentence_method_labels,
         candidates=candidates,
         seen=seen,
@@ -377,6 +469,7 @@ def _extract_known_groups_or_comparator(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
@@ -402,6 +495,7 @@ def _extract_known_groups_or_comparator(
         subgroup_label=subgroup_label,
         surrounding_text=text,
         instrument_hints=instrument_hints,
+        comparator_hints=comparator_hints,
         method_labels=sentence_method_labels,
         candidates=candidates,
         seen=seen,
@@ -416,12 +510,31 @@ def _extract_responsiveness_related(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
     text_lower = text.lower()
 
     if "responsiveness" not in text_lower:
+        return
+
+    if _NOT_ASSESSED_RE.search(text):
+        _append_candidate(
+            file_path=file_path,
+            sentence=sentence,
+            statistic_type=StatisticType.RESPONSIVENESS_RELATED_STATISTIC,
+            value_raw=text,
+            value_normalized="not_assessed",
+            subgroup_label=subgroup_label,
+            surrounding_text=text,
+            instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
+            method_labels=sentence_method_labels,
+            supports_direct_assessment=False,
+            candidates=candidates,
+            seen=seen,
+        )
         return
 
     hypothesis_status = _detect_responsiveness_hypothesis_status(text_lower)
@@ -440,6 +553,7 @@ def _extract_responsiveness_related(
             subgroup_label=subgroup_label,
             surrounding_text=text,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             method_labels=sentence_method_labels,
             responsiveness_hypothesis_status=hypothesis_status,
             candidates=candidates,
@@ -456,6 +570,7 @@ def _extract_responsiveness_related(
             subgroup_label=subgroup_label,
             surrounding_text=text,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             method_labels=sentence_method_labels,
             responsiveness_hypothesis_status=hypothesis_status,
             candidates=candidates,
@@ -470,6 +585,7 @@ def _extract_measurement_error_support_mentions(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
@@ -499,6 +615,7 @@ def _extract_measurement_error_support_mentions(
             subgroup_label=None,
             surrounding_text=text,
             instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
             method_labels=sentence_method_labels,
             candidates=candidates,
             seen=seen,
@@ -512,6 +629,7 @@ def _extract_longitudinal_responsiveness_candidate(
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
@@ -537,6 +655,7 @@ def _extract_longitudinal_responsiveness_candidate(
         subgroup_label=None,
         surrounding_text=text,
         instrument_hints=instrument_hints,
+        comparator_hints=comparator_hints,
         method_labels=sentence_method_labels,
         responsiveness_hypothesis_status=hypothesis_status,
         candidates=candidates,
@@ -554,11 +673,13 @@ def _append_candidate(
     subgroup_label: str | None,
     surrounding_text: str,
     instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
     method_labels: tuple[EvidenceMethodLabel, ...],
     candidates: list[StatisticCandidate],
     seen: set[tuple[object, ...]],
     evidence_source: EvidenceSourceType | None = None,
     measurement_routes: tuple[MeasurementPropertyRoute, ...] | None = None,
+    supports_direct_assessment: bool | None = None,
     responsiveness_hypothesis_status: ResponsivenessHypothesisStatus | None = None,
 ) -> None:
     normalized_raw = value_raw.strip()
@@ -570,6 +691,11 @@ def _append_candidate(
         statistic_type=statistic_type,
         text=surrounding_text,
         method_labels=method_labels,
+    )
+    direct_assessment = (
+        supports_direct_assessment
+        if supports_direct_assessment is not None
+        else _supports_direct_assessment(text=surrounding_text, source=source)
     )
     routes = measurement_routes or _default_routes(
         statistic_type=statistic_type,
@@ -593,6 +719,8 @@ def _append_candidate(
         tuple(route.value for route in routes),
         tuple(label.value for label in method_labels),
         tuple(instrument_hints),
+        tuple(comparator_hints),
+        direct_assessment,
         hypothesis_status.value if hypothesis_status else "",
     )
     if key in seen:
@@ -613,6 +741,8 @@ def _append_candidate(
                 ",".join(route.value for route in routes),
                 ",".join(label.value for label in method_labels),
                 ",".join(instrument_hints),
+                ",".join(comparator_hints),
+                str(direct_assessment),
                 hypothesis_status.value if hypothesis_status else "",
             ),
             statistic_type=statistic_type,
@@ -622,7 +752,9 @@ def _append_candidate(
             evidence_span_ids=(sentence.id,),
             surrounding_text=surrounding_text,
             instrument_name_hints=instrument_hints,
+            comparator_instrument_hints=comparator_hints,
             evidence_source=source,
+            supports_direct_assessment=direct_assessment,
             measurement_property_routes=routes,
             method_labels=method_labels,
             responsiveness_hypothesis_status=hypothesis_status,
@@ -692,12 +824,35 @@ def _is_interpretability_context(
     if any(token in text_lower for token in interpretability_tokens):
         return True
 
-    return statistic_type in (
-        StatisticType.MIC,
-        StatisticType.SEM,
-        StatisticType.SDC,
-        StatisticType.LOA,
-    ) and bool(method_labels)
+    # MIC/MCID values are interpretability-oriented by definition.
+    if statistic_type is StatisticType.MIC:
+        return True
+
+    # SEM/SDC/LoA can support measurement-error appraisal directly in current
+    # studies; only classify as interpretability-only when explicitly framed
+    # that way via interpretability tokens above.
+    if statistic_type in (StatisticType.SEM, StatisticType.SDC, StatisticType.LOA):
+        return False
+
+    return False
+
+
+def _supports_direct_assessment(*, text: str, source: EvidenceSourceType) -> bool:
+    if source is not EvidenceSourceType.CURRENT_STUDY:
+        return False
+    text_lower = text.lower()
+    if _NOT_ASSESSED_RE.search(text):
+        return False
+    return not any(
+        token in text_lower
+        for token in (
+            "future studies",
+            "not assessed",
+            "not evaluated",
+            "impossible to verify",
+            "lack of a gold standard",
+        )
+    )
 
 
 def _default_routes(
@@ -715,9 +870,9 @@ def _default_routes(
         StatisticType.SRMR,
     ):
         routes.append(MeasurementPropertyRoute.STRUCTURAL_VALIDITY)
-    elif statistic_type is StatisticType.CRONBACH_ALPHA:
+    elif statistic_type in (StatisticType.CRONBACH_ALPHA, StatisticType.KR20):
         routes.append(MeasurementPropertyRoute.INTERNAL_CONSISTENCY)
-    elif statistic_type in (StatisticType.ICC, StatisticType.WEIGHTED_KAPPA):
+    elif statistic_type in (StatisticType.ICC, StatisticType.WEIGHTED_KAPPA, StatisticType.KAPPA):
         routes.append(MeasurementPropertyRoute.RELIABILITY)
     elif statistic_type in (StatisticType.SEM, StatisticType.SDC, StatisticType.LOA):
         routes.append(MeasurementPropertyRoute.MEASUREMENT_ERROR_SUPPORT)
@@ -763,6 +918,35 @@ def _default_routes(
     return deduplicated
 
 
+def _partition_candidate_ids(
+    candidates: list[StatisticCandidate],
+) -> tuple[tuple[StableId, ...], tuple[StableId, ...], tuple[StableId, ...], tuple[StableId, ...]]:
+    direct_ids: list[StableId] = []
+    background_ids: list[StableId] = []
+    interpretability_ids: list[StableId] = []
+    comparator_ids: list[StableId] = []
+
+    for candidate in candidates:
+        if (
+            candidate.evidence_source is EvidenceSourceType.CURRENT_STUDY
+            and candidate.supports_direct_assessment
+        ):
+            direct_ids.append(candidate.id)
+        if candidate.evidence_source is EvidenceSourceType.BACKGROUND_CITATION:
+            background_ids.append(candidate.id)
+        if candidate.evidence_source is EvidenceSourceType.INTERPRETABILITY_ONLY:
+            interpretability_ids.append(candidate.id)
+        if candidate.comparator_instrument_hints:
+            comparator_ids.append(candidate.id)
+
+    return (
+        tuple(dict.fromkeys(direct_ids)),
+        tuple(dict.fromkeys(background_ids)),
+        tuple(dict.fromkeys(interpretability_ids)),
+        tuple(dict.fromkeys(comparator_ids)),
+    )
+
+
 def _detect_subgroup_label(text: str) -> str | None:
     text_lower = text.lower()
     mentions = {m.group(1).lower() for m in _SUBGROUP_TOKEN_PATTERN.finditer(text_lower)}
@@ -790,11 +974,37 @@ def _detect_subgroup_label(text: str) -> str | None:
 def _detect_instrument_hints(text: str) -> tuple[str, ...]:
     hints: list[str] = []
 
+    if _SIGAM_FULL_RE.search(text) or _SIGAM_ABBR_RE.search(text):
+        hints.append("SIGAM")
+    if _LCI5_FULL_RE.search(text) or _LCI5_ABBR_RE.search(text):
+        hints.append("LCI-5")
+    if _HOUGHTON_RE.search(text):
+        hints.append("Houghton")
+    if _ABC_FULL_RE.search(text) or _ABC_ABBR_RE.search(text):
+        hints.append("ABC")
+    if _TWO_MWT_FULL_RE.search(text) or _TWO_MWT_ABBR_RE.search(text):
+        hints.append("2-MWT")
+    if _TUG_FULL_RE.search(text) or _TUG_ABBR_RE.search(text):
+        hints.append("TUG")
+    if _COLD_TUG_FULL_RE.search(text) or _COLD_TUG_ABBR_RE.search(text):
+        hints.append("COLD-TUG")
+    if _SIX_MWT_FULL_RE.search(text) or _SIX_MWT_ABBR_RE.search(text):
+        hints.append("6-MWT")
     if _QTFA_FULL_RE.search(text) or _QTFA_ABBR_RE.search(text):
         hints.append("Q-TFA")
     if _PROMIS_FULL_RE.search(text) or _PROMIS_ABBR_RE.search(text):
         hints.append("PROMIS")
 
+    return tuple(dict.fromkeys(hints))
+
+
+def _detect_comparator_instrument_hints(text: str) -> tuple[str, ...]:
+    text_lower = text.lower()
+    if not _COMPARATOR_CONTEXT_RE.search(text_lower) and "construct validity" not in text_lower:
+        return ()
+    hints = _detect_instrument_hints(text)
+    if len(hints) <= 1:
+        return ()
     return tuple(dict.fromkeys(hints))
 
 
@@ -836,6 +1046,34 @@ def _build_paragraph_method_labels(
     return {
         paragraph_id: tuple(dict.fromkeys(labels)) for paragraph_id, labels in by_paragraph.items()
     }
+
+
+def _build_paragraph_instrument_hints(
+    sentences: tuple[SentenceRecord, ...],
+) -> dict[StableId, tuple[str, ...]]:
+    by_paragraph: dict[StableId, list[str]] = {}
+    for sentence in sentences:
+        hints = _detect_instrument_hints(sentence.provenance.raw_text)
+        if not hints:
+            continue
+        bucket = by_paragraph.setdefault(sentence.parent_paragraph_id, [])
+        bucket.extend(hints)
+    return {
+        paragraph_id: tuple(dict.fromkeys(hints)) for paragraph_id, hints in by_paragraph.items()
+    }
+
+
+def _merge_instrument_hints(
+    sentence_hints: tuple[str, ...],
+    paragraph_hints: tuple[str, ...],
+) -> tuple[str, ...]:
+    # Prefer sentence-local instrument mentions to avoid leaking paragraph-level
+    # co-mentioned instruments into target-specific evidence routing.
+    if sentence_hints:
+        return tuple(dict.fromkeys(sentence_hints))
+    if paragraph_hints:
+        return tuple(dict.fromkeys(paragraph_hints))
+    return ()
 
 
 def _merge_method_labels(

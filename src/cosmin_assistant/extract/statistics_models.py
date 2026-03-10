@@ -14,7 +14,9 @@ class StatisticType(StrEnum):
     """Normalized statistic type names used for deterministic downstream scoring."""
 
     CRONBACH_ALPHA = "cronbach_alpha"
+    KR20 = "kr20"
     ICC = "icc"
+    KAPPA = "kappa"
     WEIGHTED_KAPPA = "weighted_kappa"
     SEM = "sem"
     SDC = "sdc"
@@ -39,6 +41,15 @@ class EvidenceSourceType(StrEnum):
     BACKGROUND_CITATION = "background_citation"
     INTERPRETABILITY_ONLY = "interpretability_only"
     UNCLEAR = "unclear"
+
+
+class EvidenceRoutingBucket(StrEnum):
+    """High-level extracted evidence separation buckets for audit-safe routing."""
+
+    DIRECT_CURRENT_STUDY = "direct_current_study"
+    BACKGROUND_CITATION = "background_citation"
+    INTERPRETABILITY_SUPPORT = "interpretability_support"
+    COMPARATOR_INSTRUMENT_CONTEXT = "comparator_instrument_context"
 
 
 class MeasurementPropertyRoute(StrEnum):
@@ -84,7 +95,9 @@ class StatisticCandidate(ModelBase):
     evidence_span_ids: Annotated[tuple[StableId, ...], Field(min_length=1)]
     surrounding_text: NonEmptyText
     instrument_name_hints: tuple[str, ...] = ()
+    comparator_instrument_hints: tuple[str, ...] = ()
     evidence_source: EvidenceSourceType = EvidenceSourceType.CURRENT_STUDY
+    supports_direct_assessment: bool = True
     measurement_property_routes: tuple[MeasurementPropertyRoute, ...] = ()
     method_labels: tuple[EvidenceMethodLabel, ...] = ()
     responsiveness_hypothesis_status: ResponsivenessHypothesisStatus | None = None
@@ -97,3 +110,7 @@ class ArticleStatisticsExtractionResult(ModelBase):
     article_id: StableId
     file_path: NonEmptyText
     candidates: tuple[StatisticCandidate, ...]
+    direct_current_study_ids: tuple[StableId, ...] = ()
+    background_citation_ids: tuple[StableId, ...] = ()
+    interpretability_support_ids: tuple[StableId, ...] = ()
+    comparator_instrument_context_ids: tuple[StableId, ...] = ()

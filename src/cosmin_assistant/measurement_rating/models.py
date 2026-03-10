@@ -7,11 +7,16 @@ from typing import Any
 
 from pydantic import Field
 
-from cosmin_assistant.extract.statistics_models import StatisticType
+from cosmin_assistant.extract.statistics_models import (
+    EvidenceSourceType,
+    MeasurementPropertyRoute,
+    StatisticType,
+)
 from cosmin_assistant.models import (
     MeasurementPropertyRating,
     ModelBase,
     NonEmptyText,
+    PropertyActivationStatus,
     ReviewerDecisionStatus,
     StableId,
     UncertaintyStatus,
@@ -51,6 +56,12 @@ class RawResultRecord(ModelBase):
     value_normalized: float | tuple[float, float] | str | None
     subgroup_label: str | None = None
     evidence_span_ids: tuple[StableId, ...] = Field(min_length=1)
+    evidence_source: EvidenceSourceType = EvidenceSourceType.CURRENT_STUDY
+    supports_direct_assessment: bool = True
+    measurement_property_routes: tuple[MeasurementPropertyRoute, ...] = ()
+    instrument_name_hints: tuple[str, ...] = ()
+    comparator_instrument_hints: tuple[str, ...] = ()
+    provenance_flags: tuple[str, ...] = ()
 
 
 class ThresholdComparison(ModelBase):
@@ -79,5 +90,8 @@ class MeasurementPropertyRatingResult(ModelBase):
     prerequisite_decisions: tuple[PrerequisiteDecision, ...] = ()
     threshold_comparisons: tuple[ThresholdComparison, ...] = ()
     evidence_span_ids: tuple[StableId, ...] = ()
+    activation_status: PropertyActivationStatus = (
+        PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE
+    )
     uncertainty_status: UncertaintyStatus
     reviewer_decision_status: ReviewerDecisionStatus

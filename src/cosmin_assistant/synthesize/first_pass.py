@@ -5,7 +5,12 @@ from __future__ import annotations
 import hashlib
 from collections import defaultdict
 
-from cosmin_assistant.models import MeasurementPropertyRating, ReviewerDecisionStatus, StableId
+from cosmin_assistant.models import (
+    MeasurementPropertyRating,
+    PropertyActivationStatus,
+    ReviewerDecisionStatus,
+    StableId,
+)
 from cosmin_assistant.synthesize.models import (
     StudySynthesisInput,
     SubgroupExplanationPlaceholder,
@@ -48,6 +53,7 @@ def synthesize_first_pass(
         evidence_span_ids = tuple(
             sorted({span_id for entry in entries for span_id in entry.evidence_span_ids})
         )
+        activation_status = _aggregate_activation_status(entries)
 
         outputs.append(
             SynthesisAggregateResult(
@@ -71,6 +77,7 @@ def synthesize_first_pass(
                 study_entries=entries,
                 subgroup_explanation_placeholders=placeholders,
                 evidence_span_ids=evidence_span_ids,
+                activation_status=activation_status,
             )
         )
 
@@ -151,6 +158,17 @@ def _summary_explanation(rating: MeasurementPropertyRating) -> str:
             return "Included study-level results were inconsistent (+ and - present)."
         case MeasurementPropertyRating.INDETERMINATE:
             return "Evidence was mixed with indeterminate results or otherwise insufficient."
+
+
+def _aggregate_activation_status(
+    entries: tuple[StudySynthesisInput, ...],
+) -> PropertyActivationStatus:
+    statuses = {entry.activation_status for entry in entries}
+    if statuses == {PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE}:
+        return PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE
+    if len(statuses) == 1:
+        return next(iter(statuses))
+    return PropertyActivationStatus.REVIEWER_REQUIRED
 
 
 def _stable_id(prefix: str, *parts: object) -> StableId:

@@ -13,6 +13,15 @@ class ProfileType(StrEnum):
     ACTIVITY_MEASURE = "activity_measure"
 
 
+class InstrumentType(StrEnum):
+    """Deterministic instrument-type classification used for COSMIN activation gates."""
+
+    PROM = "prom"
+    PBOM = "pbom"
+    PERFORMANCE_TEST = "performance_test"
+    MIXED_OR_UNKNOWN = "mixed_or_unknown"
+
+
 class CosminItemRating(StrEnum):
     """COSMIN item-level methodological quality rating."""
 
@@ -68,3 +77,16 @@ class ReviewerDecisionStatus(StrEnum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
     OVERRIDDEN = "overridden"
+
+
+class PropertyActivationStatus(StrEnum):
+    """Scientific eligibility/activation status before COSMIN box/rating execution."""
+
+    DIRECT_CURRENT_STUDY_EVIDENCE = "direct_current_study_evidence"
+    COMPARATOR_BASED_EVIDENCE = "comparator_based_evidence"
+    INDIRECT_ONLY = "indirect_only"
+    INTERPRETABILITY_ONLY = "interpretability_only"
+    MEASUREMENT_ERROR_SUPPORT_ONLY = "measurement_error_support_only"
+    NOT_ASSESSED_IN_CURRENT_STUDY = "not_assessed_in_current_study"
+    NOT_APPLICABLE_FOR_INSTRUMENT_TYPE = "not_applicable_for_instrument_type"
+    REVIEWER_REQUIRED = "reviewer_required"

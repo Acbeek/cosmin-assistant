@@ -10,6 +10,7 @@ from cosmin_assistant.models import (
     EvidenceCertaintyLevel,
     ModelBase,
     NonEmptyText,
+    PropertyActivationStatus,
     StableId,
 )
 
@@ -86,3 +87,7 @@ class ModifiedGradeResult(ModelBase):
     downgrade_records: tuple[DomainDowngradeRecord, ...] = ()
     evidence_span_ids: tuple[StableId, ...] = ()
     explanation: NonEmptyText
+    activation_status: PropertyActivationStatus = (
+        PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE
+    )
+    grade_executed: bool = True

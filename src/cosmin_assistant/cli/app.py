@@ -10,6 +10,7 @@ import typer
 from cosmin_assistant.cli.pipeline import run_provisional_assessment
 from cosmin_assistant.models import ProfileType
 from cosmin_assistant.tables import export_run_outputs
+from cosmin_assistant.utils import ensure_supported_python
 
 app = typer.Typer(add_completion=False)
 
@@ -47,11 +48,19 @@ def main(
     """Run provisional parse -> extract -> RoB -> rating -> synthesis -> GRADE -> export."""
 
     try:
+        ensure_supported_python()
+    except RuntimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    try:
         run = run_provisional_assessment(article_path=article, profile_type=profile)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
-    output_paths = export_run_outputs(run=run, out_dir=out)
+    try:
+        output_paths = export_run_outputs(run=run, out_dir=out)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     typer.echo(f"Completed provisional COSMIN assessment for {article}")
     for key in sorted(output_paths):
         typer.echo(f"{key}: {output_paths[key]}")
@@ -60,6 +69,7 @@ def main(
 def run() -> None:
     """Console-script entry point."""
 
+    ensure_supported_python()
     app()
 
 

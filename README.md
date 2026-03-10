@@ -10,7 +10,7 @@ Deterministic, auditable COSMIN appraisal assistant for parsed article markdown 
 - Final judgments must be traceable to source text spans.
 - Missing or ambiguous evidence remains explicit (`indeterminate` / `reviewer_required`).
 
-## Current implementation status (through Task 16)
+## Current implementation status (through Task 16.6)
 
 Implemented and tested:
 
@@ -34,10 +34,20 @@ Implemented and tested:
   - conservative normalization with raw text retention
   - ambiguity preservation
   - `not_reported` vs `not_detected`
-  - role-labeled sample sizes (enrollment/analyzed/limb-level)
+  - role-labeled sample sizes (enrollment/validation/pilot/retest/analyzed/limb-level)
   - direct/background/interpretability evidence routing
+  - explicit comparator-instrument-context routing bucket
   - MIC/MCID/anchor/distribution method labels
   - responsiveness candidate detection + hypothesis-status flagging
+  - target-instrument versus comparator-instrument context separation for validation studies
+  - generic instrument-type classification (`prom`, `pbom`, `performance_test`, `mixed_or_unknown`)
+  - pre-rating property-activation eligibility statuses (direct/comparator/indirect/interpretability/support/not-assessed/not-applicable/reviewer-required)
+  - role/type decisions carry explicit text-evidence rationale fields
+  - enriched study context extraction:
+    - recruitment setting
+    - follow-up interval
+    - validation/pilot/retest sample-size fields
+  - conservative not-assessed property handling (e.g., criterion validity without gold standard)
 - COSMIN RoB modules:
   - shared item utilities + box aggregation
   - worst-score-counts and explicit NA handling
@@ -75,6 +85,22 @@ Important current limitation:
 - `cosmin-assess` is still a provisional orchestrator: PROM-only and currently wired to initial RoB/rating subset for end-to-end run output. Additional modules exist and are tested, but not all are yet integrated into the single-command pipeline.
 - Template 5/7/8 DOCX exporters are available through Python APIs; full batch orchestration and final visual-polish parity with publication templates are still pending.
 - PBOM/activity adapters are intentionally conservative and do not claim full PROM-equivalent automation.
+
+Runtime hardening now in place:
+
+- CLI fails fast on Python `<3.11` with a clear error.
+- `python -m cosmin_assistant.cli.app ...` remains supported as module fallback.
+- Every output directory now includes `run_manifest.json` with:
+  - `python_version`
+  - `package_version`
+  - `git_commit_if_available`
+  - `profile`
+  - `source_article_path`
+  - `source_article_hash`
+  - `generated_at_utc`
+- Stale-output guard: reruns to the same output folder fail if the same source path now has a different file hash.
+- Golden regression coverage includes Azadinia 2025 and Potter 2025 routing/extraction assertions.
+- Additional hold-out regression coverage verifies generic routing on unseen instrument names (no paper-name hardcoding path).
 
 ## CLI usage
 
@@ -121,6 +147,7 @@ Assessment run outputs:
 - `summary_report.md`
 - `per_study_results.csv`
 - `summary_report.docx` (stub exporter)
+- `run_manifest.json`
 - `review_overrides.json` (initially empty)
 - `adjudication_notes.json` (initially empty)
 - `review_state.json` (provisional state)
@@ -141,6 +168,12 @@ python -m pip install -e ".[dev]"
 ```
 
 If `python3.11` is unavailable on your machine, use any installed Python `>=3.11` binary.
+
+Module fallback usage (if console entrypoint is unavailable in your shell):
+
+```bash
+PYTHONPATH=src python -m cosmin_assistant.cli.app article.md --profile prom --out results/run1
+```
 
 ## Development quality gates
 
