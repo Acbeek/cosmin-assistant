@@ -10,7 +10,7 @@ Deterministic, auditable COSMIN appraisal assistant for parsed article markdown 
 - Final judgments must be traceable to source text spans.
 - Missing or ambiguous evidence remains explicit (`indeterminate` / `reviewer_required`).
 
-## Current implementation status (through Task 16.6)
+## Current implementation status (through Task 17a)
 
 Implemented and tested:
 
@@ -83,7 +83,8 @@ Implemented and tested:
 Important current limitation:
 
 - `cosmin-assess` is still a provisional orchestrator: PROM-only and currently wired to initial RoB/rating subset for end-to-end run output. Additional modules exist and are tested, but not all are yet integrated into the single-command pipeline.
-- Template 5/7/8 DOCX exporters are available through Python APIs; full batch orchestration and final visual-polish parity with publication templates are still pending.
+- Template 5/7/8 DOCX exporters are available through Python APIs; final visual-polish parity with publication templates is still pending.
+- Batch mode is currently thin orchestration only (no dashboards, caching, or performance tuning yet).
 - PBOM/activity adapters are intentionally conservative and do not claim full PROM-equivalent automation.
 
 Runtime hardening now in place:
@@ -101,6 +102,12 @@ Runtime hardening now in place:
 - Stale-output guard: reruns to the same output folder fail if the same source path now has a different file hash.
 - Golden regression coverage includes Azadinia 2025 and Potter 2025 routing/extraction assertions.
 - Additional hold-out regression coverage verifies generic routing on unseen instrument names (no paper-name hardcoding path).
+- Batch-prep scaffolding:
+  - thin batch discovery and run orchestration (`cosmin-assess-batch`)
+  - one output directory per discovered markdown article
+  - per-article `run_manifest.json` via the same single-paper export path
+  - batch summary artifacts (`batch_summary.csv` and `batch_summary.json`) with article name, detected target instrument(s), study intent, key active properties, and review status
+  - fixture-corpus metadata structure for regression expansion in `tests/fixtures/corpus/`
 
 ## CLI usage
 
@@ -108,6 +115,12 @@ Run provisional assessment:
 
 ```bash
 cosmin-assess article.md --profile prom --out results/run1
+```
+
+Run thin batch orchestration over a directory of parsed markdown files:
+
+```bash
+cosmin-assess-batch /path/to/parsed_markdown_dir --profile prom --out results/batch_run1
 ```
 
 Apply reviewer overrides/adjudication and finalize:
@@ -151,6 +164,12 @@ Assessment run outputs:
 - `review_overrides.json` (initially empty)
 - `adjudication_notes.json` (initially empty)
 - `review_state.json` (provisional state)
+
+Batch run outputs (`cosmin-assess-batch`):
+
+- one subdirectory per article containing the standard assessment artifacts above
+- `batch_summary.csv`
+- `batch_summary.json`
 
 Reviewed/finalized run outputs include the same files with updated review metadata and histories.
 

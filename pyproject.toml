@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 cosmin-assess = "cosmin_assistant.cli.app:run"
+cosmin-assess-batch = "cosmin_assistant.cli.batch_app:run_batch"
 cosmin-review = "cosmin_assistant.cli.review_app:run_review"
 
 [project.optional-dependencies]
