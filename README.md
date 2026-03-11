@@ -10,7 +10,7 @@ Deterministic, auditable COSMIN appraisal assistant for parsed article markdown 
 - Final judgments must be traceable to source text spans.
 - Missing or ambiguous evidence remains explicit (`indeterminate` / `reviewer_required`).
 
-## Current implementation status (through Task 17a)
+## Current implementation status (through Task 17b)
 
 Implemented and tested:
 
@@ -106,7 +106,9 @@ Runtime hardening now in place:
   - thin batch discovery and run orchestration (`cosmin-assess-batch`)
   - one output directory per discovered markdown article
   - per-article `run_manifest.json` via the same single-paper export path
-  - batch summary artifacts (`batch_summary.csv` and `batch_summary.json`) with article name, detected target instrument(s), study intent, key active properties, and review status
+  - deterministic collision-safe per-article output naming
+  - deterministic failure isolation (continue-on-error or fail-fast) with explicit exit status
+  - batch summary artifacts (`batch_summary.csv` and `batch_summary.json`) with article name, detected target instrument(s), study intent, key active properties, review status, run status, and error message
   - fixture-corpus metadata structure for regression expansion in `tests/fixtures/corpus/`
 
 ## CLI usage
@@ -121,6 +123,12 @@ Run thin batch orchestration over a directory of parsed markdown files:
 
 ```bash
 cosmin-assess-batch /path/to/parsed_markdown_dir --profile prom --out results/batch_run1
+```
+
+Stop batch immediately on first failing article:
+
+```bash
+cosmin-assess-batch /path/to/parsed_markdown_dir --profile prom --out results/batch_run1 --fail-fast
 ```
 
 Apply reviewer overrides/adjudication and finalize:
@@ -168,6 +176,7 @@ Assessment run outputs:
 Batch run outputs (`cosmin-assess-batch`):
 
 - one subdirectory per article containing the standard assessment artifacts above
+- failed article directories include `batch_error.json`
 - `batch_summary.csv`
 - `batch_summary.json`
 
@@ -180,18 +189,34 @@ Template DOCX exports are now available via API entry points (`export_template5_
 ## Installation
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
+python3.13 -m venv venv313
+source venv313/bin/activate
 python -m pip install -U pip
 python -m pip install -e ".[dev]"
 ```
 
 If `python3.11` is unavailable on your machine, use any installed Python `>=3.11` binary.
 
+macOS/iCloud note:
+
+- If your repository is under iCloud Drive (`Mobile Documents/...`) and you use a dot-prefixed env name like `.venv`, editable-install `.pth` files can be treated as hidden and skipped by Python, causing `ModuleNotFoundError: No module named 'cosmin_assistant'` from console scripts.
+- Prefer a non-dot venv name (for example `venv313`).
+- Verify import after install:
+
+```bash
+python -c "import cosmin_assistant; print(cosmin_assistant.__file__)"
+```
+
 Module fallback usage (if console entrypoint is unavailable in your shell):
 
 ```bash
 PYTHONPATH=src python -m cosmin_assistant.cli.app article.md --profile prom --out results/run1
+```
+
+Batch module fallback:
+
+```bash
+PYTHONPATH=src python -m cosmin_assistant.cli.batch_app /path/to/parsed_markdown_dir --profile prom --out results/batch_run1
 ```
 
 ## Development quality gates

@@ -79,7 +79,7 @@ _SINGLE_VALUE_PATTERNS: tuple[tuple[StatisticType, re.Pattern[str]], ...] = (
     (
         StatisticType.MIC,
         re.compile(
-            rf"\b(?:MIC|MCID|MID)\b(?!\s*\(\s*n\s*=)[^\d-]{{0,40}}"
+            rf"\b(?:MIC|MCID|MID)\b(?!\s*\(\s*n\s*=)[^=:\n]{{0,60}}"
             rf"(?:=|:|to\s+be|was|is|of|calculated\s+as)\s*({_DECIMAL})",
             re.IGNORECASE,
         ),
@@ -134,10 +134,15 @@ _LCI5_ABBR_RE = re.compile(r"\blci-?5\b", re.IGNORECASE)
 _HOUGHTON_RE = re.compile(r"\bhoughton(?:\s+scale)?\b", re.IGNORECASE)
 _ABC_FULL_RE = re.compile(r"activities-?specific\s+balance\s+confidence", re.IGNORECASE)
 _ABC_ABBR_RE = re.compile(r"\babc(?:\s+scale)?\b", re.IGNORECASE)
-_TWO_MWT_FULL_RE = re.compile(r"two-?minute\s+walk\s+test", re.IGNORECASE)
+_GPS_FULL_RE = re.compile(r"\bgait\s+profile\s+score\b", re.IGNORECASE)
+_GPS_ABBR_RE = re.compile(r"\bgps\b", re.IGNORECASE)
+_TWO_MWT_FULL_RE = re.compile(r"two[- ]?minute\s+walk\s+test", re.IGNORECASE)
 _TWO_MWT_ABBR_RE = re.compile(r"\b2-?mwt\b", re.IGNORECASE)
 _TUG_FULL_RE = re.compile(r"timed\s+up\s+and\s+go", re.IGNORECASE)
-_TUG_ABBR_RE = re.compile(r"\btug(?:\s+test)?\b", re.IGNORECASE)
+_TUG_ABBR_RE = re.compile(
+    r"(?<![A-Za-z0-9-])tug(?:\s+test)?(?![A-Za-z0-9-])",
+    re.IGNORECASE,
+)
 _COLD_TUG_FULL_RE = re.compile(
     r"colorado\s+limb\s+donning[- ]timed\s+up\s+and\s+go",
     re.IGNORECASE,
@@ -155,7 +160,10 @@ _PROMIS_FULL_RE = re.compile(
     r"patient-?reported\s+outcomes\s+measurement\s+information\s+system",
     re.IGNORECASE,
 )
-_CITATION_RE = re.compile(r"\[[0-9,\s]+\]|\bet\s+al\.\b", re.IGNORECASE)
+_CITATION_RE = re.compile(
+    r"\[[0-9,\s]+\]|<sup>\s*\d+(?:\s*[-,]\s*\d+)*\s*</sup>|\bet\s+al\.\b",
+    re.IGNORECASE,
+)
 _SEM_TERM_RE = re.compile(r"\b(?:SEM|standard\s+error\s+of\s+measurement)\b", re.IGNORECASE)
 _SDC_TERM_RE = re.compile(r"\bSDC\b", re.IGNORECASE)
 _LOA_TERM_RE = re.compile(r"\b(?:LoA|limits?\s+of\s+agreement)\b", re.IGNORECASE)
@@ -175,8 +183,65 @@ _NOT_ASSESSED_RE = re.compile(
     re.IGNORECASE,
 )
 _COMPARATOR_CONTEXT_RE = re.compile(
-    r"\b(by comparing|compared with|correlation between|correlations? of|"
-    r"association between|with the)\b",
+    r"\b(by comparing|compared with|comparison(?:s)? with|correlat(?:ed|ion(?:s)?) "
+    r"(?:between|with)|association (?:between|with)|with the)\b",
+    re.IGNORECASE,
+)
+_INTERNAL_STRUCTURE_SIGNAL_RE = re.compile(
+    r"\b(?:rasch|irt|item\s+fit|infit|outfit|local\s+dependence|"
+    r"local\s+independence|unidimensional(?:ity)?|dimensionality|"
+    r"residual\s+pca|threshold\s+ordering)\b",
+    re.IGNORECASE,
+)
+_OUTCOME_LIST_RE = re.compile(
+    r"\b(?:outcome\s+measures?|outcomes?)\s*(?:include(?:d)?|consisted\s+of|"
+    r"were\s+assessed\s+with|were\s+measured\s+with|were\s+the)\s*[:=-]?\s*([^.]+)",
+    re.IGNORECASE,
+)
+_GENERIC_INSTRUMENT_TOKEN_RE = re.compile(
+    r"\b([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+|[A-Z]{3,12}(?:\s*\d+(?:\.\d+)*)?)\b"
+)
+_GENERIC_INSTRUMENT_CONTEXT_RE = re.compile(
+    r"\b(?:instrument|questionnaire|scale|survey|measure|tool|test|score|scores|"
+    r"outcome|comparing|correlation|validity|reliability)\b",
+    re.IGNORECASE,
+)
+_RATER_RELIABILITY_SPAN_RE = re.compile(
+    r"\b(?:inter-?rater|intra-?rater|test-?retest(?:/intra-?rater)?)\s+reliability\b[^;\n]{0,160}",
+    re.IGNORECASE,
+)
+_GENERIC_INSTRUMENT_STOPWORDS = {
+    "ICC",
+    "SEM",
+    "SDC",
+    "LOA",
+    "MIC",
+    "MCID",
+    "MID",
+    "CFI",
+    "TLI",
+    "RMSEA",
+    "SRMR",
+    "AUC",
+    "CI",
+    "SD",
+    "SE",
+    "SPSS",
+    "KR-20",
+    "KR20",
+    "MWT",
+    "R",
+}
+_LOCAL_TARGET_VALUE_RE = re.compile(
+    r"(?:for|of)\s+([A-Za-z][A-Za-z0-9\- ]{1,60})\s*(?:=|:)\s*$",
+    re.IGNORECASE,
+)
+_ADDITIONAL_VALUE_PAIR_RE = re.compile(
+    rf"(?:,|and)\s*([A-Za-z][A-Za-z0-9\- ]{{1,60}}?)\s*(?:=|:)\s*({_DECIMAL})",
+    re.IGNORECASE,
+)
+_MIC_VALUE_PAIR_RE = re.compile(
+    rf"([A-Za-z][A-Za-z0-9\- ]{{1,60}}?)\s*(?:=|:)\s*({_DECIMAL})",
     re.IGNORECASE,
 )
 
@@ -222,6 +287,24 @@ def extract_statistics_from_parsed_document(
             comparator_hints=comparator_hints,
             sentence_method_labels=sentence_method_labels,
         )
+        _extract_rater_reliability_coefficients(
+            file_path=parsed.file_path,
+            sentence=sentence,
+            subgroup_label=subgroup_label,
+            candidates=candidates,
+            seen=seen,
+            instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
+            sentence_method_labels=sentence_method_labels,
+        )
+        _extract_table_internal_consistency_rows(
+            file_path=parsed.file_path,
+            sentence=sentence,
+            candidates=candidates,
+            seen=seen,
+            comparator_hints=comparator_hints,
+            sentence_method_labels=sentence_method_labels,
+        )
         _extract_loa(
             file_path=parsed.file_path,
             sentence=sentence,
@@ -253,6 +336,16 @@ def extract_statistics_from_parsed_document(
             sentence_method_labels=sentence_method_labels,
         )
         _extract_known_groups_or_comparator(
+            file_path=parsed.file_path,
+            sentence=sentence,
+            subgroup_label=subgroup_label,
+            candidates=candidates,
+            seen=seen,
+            instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
+            sentence_method_labels=sentence_method_labels,
+        )
+        _extract_internal_structure_signals(
             file_path=parsed.file_path,
             sentence=sentence,
             subgroup_label=subgroup_label,
@@ -318,12 +411,54 @@ def _extract_single_value_stats(
     sentence_method_labels: tuple[EvidenceMethodLabel, ...],
 ) -> None:
     text = sentence.provenance.raw_text
+    sentence_subgroup_label = _detect_subgroup_label(text)
 
     for statistic_type, pattern in _SINGLE_VALUE_PATTERNS:
-        for match in pattern.finditer(text):
+        matches = list(pattern.finditer(text))
+        if statistic_type is StatisticType.MIC and not matches:
+            _extract_mic_value_pairs_without_inline_numeric(
+                file_path=file_path,
+                sentence=sentence,
+                sentence_text=text,
+                subgroup_label=sentence_subgroup_label,
+                candidates=candidates,
+                seen=seen,
+                comparator_hints=comparator_hints,
+                method_labels=sentence_method_labels,
+            )
+            continue
+
+        for match in matches:
             raw_value = match.group(1)
             normalized = _to_float(raw_value)
             subgroup_label = _detect_subgroup_for_match(text, match.start(), match.end())
+            clause_text = _extract_clause_for_match(text, match.start(), match.end())
+            clause_hints = _detect_instrument_hints(clause_text)
+            clause_comparator_hints = _detect_comparator_instrument_hints(clause_text)
+            clause_method_labels = _detect_method_labels(clause_text)
+            resolved_hints = clause_hints or instrument_hints
+            resolved_comparator_hints = clause_comparator_hints or comparator_hints
+            if statistic_type is StatisticType.MIC:
+                local_target_hints = _detect_local_target_hints_for_value(
+                    text=text,
+                    value_start=match.start(1),
+                )
+                if local_target_hints:
+                    resolved_hints = local_target_hints
+            if (
+                statistic_type in (StatisticType.CORRELATION, StatisticType.AUC)
+                and len(resolved_hints) < 2
+                and instrument_hints
+            ):
+                resolved_hints = tuple(dict.fromkeys((*resolved_hints, *instrument_hints)))
+            if (
+                statistic_type in (StatisticType.CORRELATION, StatisticType.AUC)
+                and len(resolved_comparator_hints) < 2
+                and comparator_hints
+            ):
+                resolved_comparator_hints = tuple(
+                    dict.fromkeys((*resolved_comparator_hints, *comparator_hints))
+                )
             _append_candidate(
                 file_path=file_path,
                 sentence=sentence,
@@ -331,13 +466,184 @@ def _extract_single_value_stats(
                 value_raw=raw_value,
                 value_normalized=normalized,
                 subgroup_label=subgroup_label,
+                surrounding_text=clause_text or text,
+                instrument_hints=resolved_hints,
+                comparator_hints=resolved_comparator_hints,
+                method_labels=clause_method_labels or sentence_method_labels,
+                candidates=candidates,
+                seen=seen,
+            )
+            if statistic_type is StatisticType.MIC:
+                _extract_additional_mic_values(
+                    file_path=file_path,
+                    sentence=sentence,
+                    sentence_text=text,
+                    tail_start=match.end(1),
+                    subgroup_label=subgroup_label,
+                    candidates=candidates,
+                    seen=seen,
+                    comparator_hints=resolved_comparator_hints,
+                    method_labels=clause_method_labels or sentence_method_labels,
+                )
+
+
+def _extract_table_internal_consistency_rows(
+    *,
+    file_path: str,
+    sentence: SentenceRecord,
+    candidates: list[StatisticCandidate],
+    seen: set[tuple[object, ...]],
+    comparator_hints: tuple[str, ...],
+    sentence_method_labels: tuple[EvidenceMethodLabel, ...],
+) -> None:
+    text = sentence.provenance.raw_text
+    text_lower = text.lower()
+    if "<table" not in text_lower:
+        return
+    if "cronbach" not in text_lower and "kr-20" not in text_lower and "kr20" not in text_lower:
+        return
+
+    rows = _extract_table_rows(text)
+    if not rows:
+        return
+
+    header_hints = _table_column_instrument_hints(rows)
+    if not header_hints:
+        return
+
+    for row in rows:
+        if not row:
+            continue
+        label = _clean_table_cell_text(row[0]).lower()
+        statistic_type: StatisticType | None = None
+        if "cronbach" in label or "alpha" in label:
+            statistic_type = StatisticType.CRONBACH_ALPHA
+        elif "kr-20" in label or "kr20" in label or "kuder" in label:
+            statistic_type = StatisticType.KR20
+        if statistic_type is None:
+            continue
+
+        for column_index, instrument_hint in header_hints.items():
+            if column_index >= len(row):
+                continue
+            raw_cell = _clean_table_cell_text(row[column_index])
+            match = re.search(rf"\b({_DECIMAL})\b", raw_cell)
+            if not match:
+                continue
+            raw_value = match.group(1)
+            _append_candidate(
+                file_path=file_path,
+                sentence=sentence,
+                statistic_type=statistic_type,
+                value_raw=raw_value,
+                value_normalized=_to_float(raw_value),
+                subgroup_label=None,
                 surrounding_text=text,
-                instrument_hints=instrument_hints,
+                instrument_hints=(instrument_hint,),
                 comparator_hints=comparator_hints,
                 method_labels=sentence_method_labels,
                 candidates=candidates,
                 seen=seen,
             )
+
+
+def _extract_rater_reliability_coefficients(
+    *,
+    file_path: str,
+    sentence: SentenceRecord,
+    subgroup_label: str | None,
+    candidates: list[StatisticCandidate],
+    seen: set[tuple[object, ...]],
+    instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
+    sentence_method_labels: tuple[EvidenceMethodLabel, ...],
+) -> None:
+    text = sentence.provenance.raw_text
+    for match in _RATER_RELIABILITY_SPAN_RE.finditer(text):
+        clause_text = match.group(0)
+        clause_lower = clause_text.lower()
+        statistic_type = StatisticType.ICC
+        if "weighted kappa" in clause_lower or "κw" in clause_lower:
+            statistic_type = StatisticType.WEIGHTED_KAPPA
+        elif "kappa" in clause_lower or "κ" in clause_text:
+            statistic_type = StatisticType.KAPPA
+        clause_hints = _detect_instrument_hints(clause_text) or instrument_hints
+        if not clause_hints:
+            continue
+        for value_match in re.finditer(rf"({_DECIMAL})", clause_text):
+            raw_value = value_match.group(1)
+            if "." not in raw_value:
+                continue
+            left_window = clause_text[max(0, value_match.start() - 8) : value_match.start()].lower()
+            if re.search(r"p\s*<\s*$", left_window):
+                continue
+            normalized = _to_float(raw_value)
+            if normalized is None or normalized < -1.0 or normalized > 1.0:
+                continue
+            _append_candidate(
+                file_path=file_path,
+                sentence=sentence,
+                statistic_type=statistic_type,
+                value_raw=raw_value,
+                value_normalized=normalized,
+                subgroup_label=subgroup_label,
+                surrounding_text=clause_text,
+                instrument_hints=clause_hints,
+                comparator_hints=comparator_hints,
+                method_labels=sentence_method_labels,
+                candidates=candidates,
+                seen=seen,
+            )
+
+
+def _extract_table_rows(text: str) -> tuple[tuple[str, ...], ...]:
+    rows: list[tuple[str, ...]] = []
+    for row_match in re.finditer(r"<tr[^>]*>(.*?)</tr>", text, re.IGNORECASE | re.DOTALL):
+        row_html = row_match.group(1)
+        cells = tuple(
+            cell_match.group(1)
+            for cell_match in re.finditer(
+                r"<t[dh][^>]*>(.*?)</t[dh]>",
+                row_html,
+                re.IGNORECASE | re.DOTALL,
+            )
+        )
+        if cells:
+            rows.append(cells)
+    return tuple(rows)
+
+
+def _table_column_instrument_hints(rows: tuple[tuple[str, ...], ...]) -> dict[int, str]:
+    for row in rows:
+        by_column: dict[int, str] = {}
+        for index, raw_cell in enumerate(row):
+            normalized_label = _normalize_table_instrument_label(_clean_table_cell_text(raw_cell))
+            if normalized_label:
+                by_column[index] = normalized_label
+        if len(by_column) >= 2:
+            return by_column
+    return {}
+
+
+def _clean_table_cell_text(raw_cell: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", raw_cell)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _normalize_table_instrument_label(value: str) -> str | None:
+    cleaned = value.strip(" :;,.")
+    if not cleaned:
+        return None
+
+    detected_hints = _detect_instrument_hints(cleaned)
+    if detected_hints:
+        return detected_hints[0]
+
+    if re.fullmatch(r"[A-Z][A-Z0-9\-]*(?:\s+\d+(?:\.\d+)*)?", cleaned):
+        return cleaned
+
+    return None
 
 
 def _extract_loa(
@@ -502,6 +808,38 @@ def _extract_known_groups_or_comparator(
     )
 
 
+def _extract_internal_structure_signals(
+    *,
+    file_path: str,
+    sentence: SentenceRecord,
+    subgroup_label: str | None,
+    candidates: list[StatisticCandidate],
+    seen: set[tuple[object, ...]],
+    instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
+    sentence_method_labels: tuple[EvidenceMethodLabel, ...],
+) -> None:
+    text = sentence.provenance.raw_text
+    if not _INTERNAL_STRUCTURE_SIGNAL_RE.search(text):
+        return
+
+    _append_candidate(
+        file_path=file_path,
+        sentence=sentence,
+        statistic_type=StatisticType.INTERNAL_STRUCTURE_FINDING,
+        value_raw=text,
+        value_normalized="reported",
+        subgroup_label=subgroup_label,
+        surrounding_text=text,
+        instrument_hints=instrument_hints,
+        comparator_hints=comparator_hints,
+        method_labels=sentence_method_labels,
+        measurement_routes=(MeasurementPropertyRoute.STRUCTURAL_VALIDITY,),
+        candidates=candidates,
+        seen=seen,
+    )
+
+
 def _extract_responsiveness_related(
     *,
     file_path: str,
@@ -640,6 +978,8 @@ def _extract_longitudinal_responsiveness_candidate(
     if "baseline" not in text_lower:
         return
     if "follow-up" not in text_lower and not _INTERVAL_RE.search(text_lower):
+        return
+    if _MCID_TERM_RE.search(text_lower):
         return
     if not _CHANGE_TERM_RE.search(text_lower):
         return
@@ -893,6 +1233,8 @@ def _default_routes(
         StatisticType.MEASUREMENT_INVARIANCE_FINDING,
     ):
         routes.append(MeasurementPropertyRoute.HYPOTHESES_TESTING_FOR_CONSTRUCT_VALIDITY)
+    elif statistic_type is StatisticType.INTERNAL_STRUCTURE_FINDING:
+        routes.append(MeasurementPropertyRoute.STRUCTURAL_VALIDITY)
 
     if (
         evidence_source is EvidenceSourceType.INTERPRETABILITY_ONLY
@@ -982,6 +1324,8 @@ def _detect_instrument_hints(text: str) -> tuple[str, ...]:
         hints.append("Houghton")
     if _ABC_FULL_RE.search(text) or _ABC_ABBR_RE.search(text):
         hints.append("ABC")
+    if _GPS_FULL_RE.search(text) or _GPS_ABBR_RE.search(text):
+        hints.append("GPS")
     if _TWO_MWT_FULL_RE.search(text) or _TWO_MWT_ABBR_RE.search(text):
         hints.append("2-MWT")
     if _TUG_FULL_RE.search(text) or _TUG_ABBR_RE.search(text):
@@ -994,6 +1338,21 @@ def _detect_instrument_hints(text: str) -> tuple[str, ...]:
         hints.append("Q-TFA")
     if _PROMIS_FULL_RE.search(text) or _PROMIS_ABBR_RE.search(text):
         hints.append("PROMIS")
+
+    if _GENERIC_INSTRUMENT_CONTEXT_RE.search(text) or _OUTCOME_LIST_RE.search(text):
+        for match in _GENERIC_INSTRUMENT_TOKEN_RE.finditer(text):
+            token = match.group(1).strip()
+            if token.upper() in _GENERIC_INSTRUMENT_STOPWORDS:
+                continue
+            hints.append(token)
+
+    outcome_match = _OUTCOME_LIST_RE.search(text)
+    if outcome_match:
+        for item in _split_outcome_list_items(outcome_match.group(1)):
+            if len(item) < 3:
+                continue
+            if any(char.isdigit() for char in item) or " " in item:
+                hints.append(item)
 
     return tuple(dict.fromkeys(hints))
 
@@ -1151,3 +1510,123 @@ def _stable_id(prefix: str, *parts: object) -> StableId:
     serialized = "|".join(str(part) for part in parts)
     digest = hashlib.sha1(f"{prefix}|{serialized}".encode()).hexdigest()[:16]
     return f"{prefix}.{digest}"
+
+
+def _split_outcome_list_items(raw_text: str) -> tuple[str, ...]:
+    cleaned = re.sub(r"\([^)]*\)", "", raw_text)
+    normalized = cleaned.replace(" and ", ",")
+    items = [item.strip(" :;,.") for item in normalized.split(",")]
+    filtered = [item for item in items if item]
+    return tuple(dict.fromkeys(filtered))
+
+
+def _extract_additional_mic_values(
+    *,
+    file_path: str,
+    sentence: SentenceRecord,
+    sentence_text: str,
+    tail_start: int,
+    subgroup_label: str | None,
+    candidates: list[StatisticCandidate],
+    seen: set[tuple[object, ...]],
+    comparator_hints: tuple[str, ...],
+    method_labels: tuple[EvidenceMethodLabel, ...],
+) -> None:
+    tail_text = sentence_text[tail_start:]
+    if not tail_text:
+        return
+
+    for match in _ADDITIONAL_VALUE_PAIR_RE.finditer(tail_text):
+        raw_target = match.group(1).strip(" ,.;:()")
+        raw_value = match.group(2)
+        normalized_target = _normalize_local_target_hint(raw_target)
+        if not normalized_target:
+            continue
+
+        _append_candidate(
+            file_path=file_path,
+            sentence=sentence,
+            statistic_type=StatisticType.MIC,
+            value_raw=raw_value,
+            value_normalized=_to_float(raw_value),
+            subgroup_label=subgroup_label,
+            surrounding_text=sentence_text,
+            instrument_hints=(normalized_target,),
+            comparator_hints=comparator_hints,
+            method_labels=method_labels,
+            candidates=candidates,
+            seen=seen,
+        )
+
+
+def _extract_mic_value_pairs_without_inline_numeric(
+    *,
+    file_path: str,
+    sentence: SentenceRecord,
+    sentence_text: str,
+    subgroup_label: str | None,
+    candidates: list[StatisticCandidate],
+    seen: set[tuple[object, ...]],
+    comparator_hints: tuple[str, ...],
+    method_labels: tuple[EvidenceMethodLabel, ...],
+) -> None:
+    token_match = re.search(r"\b(?:MIC|MCID|MID)\b", sentence_text, re.IGNORECASE)
+    if not token_match:
+        return
+
+    tail_text = sentence_text[token_match.end() :]
+    if not tail_text:
+        return
+
+    for match in _MIC_VALUE_PAIR_RE.finditer(tail_text):
+        raw_target = match.group(1).strip(" ,.;:()")
+        raw_value = match.group(2)
+        normalized_target = _normalize_local_target_hint(raw_target)
+        if not normalized_target:
+            continue
+
+        _append_candidate(
+            file_path=file_path,
+            sentence=sentence,
+            statistic_type=StatisticType.MIC,
+            value_raw=raw_value,
+            value_normalized=_to_float(raw_value),
+            subgroup_label=subgroup_label,
+            surrounding_text=sentence_text,
+            instrument_hints=(normalized_target,),
+            comparator_hints=comparator_hints,
+            method_labels=method_labels,
+            candidates=candidates,
+            seen=seen,
+        )
+
+
+def _detect_local_target_hints_for_value(*, text: str, value_start: int) -> tuple[str, ...]:
+    left_window = text[max(0, value_start - 90) : value_start]
+    match = _LOCAL_TARGET_VALUE_RE.search(left_window)
+    if not match:
+        return ()
+
+    raw_target = match.group(1).strip(" ,.;:()")
+    if not raw_target:
+        return ()
+
+    lowered = raw_target.lower()
+    if lowered in {"mic", "mcid", "mid", "difference"}:
+        return ()
+
+    normalized_target = _normalize_local_target_hint(raw_target)
+    if not normalized_target:
+        return ()
+    return (normalized_target,)
+
+
+def _normalize_local_target_hint(raw_target: str) -> str:
+    text = raw_target.strip()
+    if not text:
+        return ""
+    if _TWO_MWT_FULL_RE.search(text) or _TWO_MWT_ABBR_RE.search(text):
+        return "2-MWT"
+    if _GPS_FULL_RE.search(text) or _GPS_ABBR_RE.search(text):
+        return "GPS"
+    return text

@@ -31,6 +31,7 @@ class StatisticType(StrEnum):
     DIF_FINDING = "dif_finding"
     MEASUREMENT_INVARIANCE_FINDING = "measurement_invariance_finding"
     KNOWN_GROUPS_OR_COMPARATOR_RESULT = "known_groups_or_comparator_result"
+    INTERNAL_STRUCTURE_FINDING = "internal_structure_finding"
     RESPONSIVENESS_RELATED_STATISTIC = "responsiveness_related_statistic"
 
 

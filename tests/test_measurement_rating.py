@@ -93,6 +93,28 @@ def test_structural_validity_conflicting_results_stay_inconsistent() -> None:
     assert result.reviewer_decision_status is ReviewerDecisionStatus.PENDING
 
 
+def test_structural_validity_accepts_direct_internal_structure_findings() -> None:
+    result = rate_structural_validity(
+        study_id="study.205",
+        instrument_id="inst.205",
+        statistic_candidates=(
+            _candidate(
+                candidate_id="stat.205",
+                statistic_type=StatisticType.INTERNAL_STRUCTURE_FINDING,
+                value_raw="rasch internal structure reported",
+                value_normalized="reported",
+                evidence_span_id="sen.205",
+            ),
+        ),
+    )
+
+    assert result.computed_rating is MeasurementPropertyRating.SUFFICIENT
+    assert any(
+        comparison.statistic_type is StatisticType.INTERNAL_STRUCTURE_FINDING
+        for comparison in result.threshold_comparisons
+    )
+
+
 def test_internal_consistency_returns_indeterminate_when_prerequisite_missing() -> None:
     result = rate_internal_consistency(
         study_id="study.301",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -37,8 +38,8 @@ _SUBSAMPLE_RE = re.compile(
 )
 _INSTRUMENT_CONTEXT_RE = re.compile(
     r"\b("
-    r"questionnaire|patient-reported|outcome measure|domain score|scores?|"
-    r"completed|baseline|follow-up"
+    r"instrument|questionnaire|scale|survey|test|measure|measures|patient-reported|"
+    r"outcome|outcome measure|domain score|scores?|completed|baseline|follow-up"
     r")\b",
     flags=re.IGNORECASE,
 )
@@ -51,10 +52,17 @@ _NON_INSTRUMENT_CONTEXT_RE = re.compile(
 )
 _INSTRUMENT_LABEL_RE = re.compile(
     r"(?:instrument(?: name)?|questionnaire|measure|tool)\s*[:=-]\s*"
-    r"([A-Za-z][A-Za-z0-9\-_/() ]{1,120})",
+    r"([A-Za-z][A-Za-z0-9\-_/(). ]{1,120})",
     flags=re.IGNORECASE,
 )
-_INSTRUMENT_ACRONYM_RE = re.compile(r"\b([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+|[A-Z]{4,10})\b")
+_OUTCOME_LIST_RE = re.compile(
+    r"\b(?:outcome\s+measures?|outcomes?)\s*(?:include(?:d)?|consisted\s+of|"
+    r"were\s+assessed\s+with|were\s+measured\s+with|were\s+the)\s*[:=-]?\s*([^.]+)",
+    flags=re.IGNORECASE,
+)
+_INSTRUMENT_ACRONYM_RE = re.compile(
+    r"\b([A-Z][A-Z0-9]+(?:-[A-Z0-9]+)+|[A-Z]{3,12}(?:\s*\d+(?:\.\d+)*)?)\b"
+)
 _SIGAM_FULL_RE = re.compile(r"special\s+interest\s+group\s+in\s+amputee\s+medicine", re.IGNORECASE)
 _SIGAM_ABBR_RE = re.compile(r"\bsigam\b", re.IGNORECASE)
 _LCI5_FULL_RE = re.compile(r"locomotor\s+capabilities\s+index-?5", re.IGNORECASE)
@@ -62,10 +70,15 @@ _LCI5_ABBR_RE = re.compile(r"\blci-?5\b", re.IGNORECASE)
 _HOUGHTON_RE = re.compile(r"\bhoughton(?:\s+scale)?\b", re.IGNORECASE)
 _ABC_FULL_RE = re.compile(r"activities-?specific\s+balance\s+confidence", re.IGNORECASE)
 _ABC_ABBR_RE = re.compile(r"\babc(?:\s+scale)?\b", re.IGNORECASE)
-_TWO_MWT_FULL_RE = re.compile(r"two-?minute\s+walk\s+test", re.IGNORECASE)
+_GPS_FULL_RE = re.compile(r"\bgait\s+profile\s+score\b", re.IGNORECASE)
+_GPS_ABBR_RE = re.compile(r"\bgps\b", re.IGNORECASE)
+_TWO_MWT_FULL_RE = re.compile(r"two[- ]?minute\s+walk\s+test", re.IGNORECASE)
 _TWO_MWT_ABBR_RE = re.compile(r"\b2-?mwt\b", re.IGNORECASE)
 _TUG_FULL_RE = re.compile(r"timed\s+up\s+and\s+go", re.IGNORECASE)
-_TUG_ABBR_RE = re.compile(r"\btug(?:\s+test)?\b", re.IGNORECASE)
+_TUG_ABBR_RE = re.compile(
+    r"(?<![A-Za-z0-9-])tug(?:\s+test)?(?![A-Za-z0-9-])",
+    re.IGNORECASE,
+)
 _COLD_TUG_FULL_RE = re.compile(
     r"colorado\s+limb\s+donning[- ]timed\s+up\s+and\s+go",
     re.IGNORECASE,
@@ -83,11 +96,28 @@ _PROMIS_FULL_RE = re.compile(
 )
 _QTFA_ABBR_RE = re.compile(r"\bq\s*-?\s*tfa\b", flags=re.IGNORECASE)
 _PROMIS_ABBR_RE = re.compile(r"\bpromis\b", flags=re.IGNORECASE)
-_CITATION_RE = re.compile(r"\[[0-9,\s]+\]|\bet\s+al\.\b", flags=re.IGNORECASE)
+_CITATION_RE = re.compile(
+    r"\[[0-9,\s]+\]|<sup>\s*\d+(?:\s*[-,]\s*\d+)*\s*</sup>|\bet\s+al\.\b",
+    flags=re.IGNORECASE,
+)
 _INTERVAL_RE = re.compile(r"\b(\d+)\s*(month|months|week|weeks|year|years)\b", flags=re.IGNORECASE)
 _FOLLOW_UP_INTERVAL_WORD_RE = re.compile(
     r"\b(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s*[- ]?"
     r"(day|days|week|weeks|month|months|year|years)\b",
+    flags=re.IGNORECASE,
+)
+_SOFTWARE_VERSION_CONTEXT_RE = re.compile(
+    r"\b(?:spss|stata|sas|r\s+software|python|jamovi|matlab)\b",
+    flags=re.IGNORECASE,
+)
+_INSTRUMENT_VERSION_CONTEXT_RE = re.compile(
+    r"\b(?:instrument|questionnaire|scale|measure|tool|test|form)\b",
+    flags=re.IGNORECASE,
+)
+_INTERNAL_STRUCTURE_SIGNAL_RE = re.compile(
+    r"\b(?:rasch|irt|item\s+fit|infit|outfit|local\s+dependence|"
+    r"local\s+independence|unidimensional(?:ity)?|dimensionality|"
+    r"residual\s+pca|threshold\s+ordering)\b",
     flags=re.IGNORECASE,
 )
 _RECRUITMENT_SETTING_RE = re.compile(
@@ -99,8 +129,14 @@ _AURORA_SETTING_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _VALIDATION_SAMPLE_RE = re.compile(
-    r"\b(?:sample size of|validity study[^.]{0,80}\b(?:of|with)|administered to)\s+"
+    r"\b(?:sample size of|validity study[^.]{0,80}\bof|"
+    r"validation study[^.]{0,80}\bof|administered to)\s+"
     r"(forty|thirty|twenty|ten|\d+)\b",
+    flags=re.IGNORECASE,
+)
+_VALIDITY_STUDY_SAMPLE_RE = re.compile(
+    r"\b(\d+)\s+(?:participants?|patients?|subjects?)?\s*(?:in|for)\s+(?:the\s+)?"
+    r"(?:validity|validation)\s+study\b",
     flags=re.IGNORECASE,
 )
 _ANALYZED_OBSERVATIONS_RE = re.compile(
@@ -113,6 +149,11 @@ _PILOT_SAMPLE_RE = re.compile(
 )
 _RETEST_SAMPLE_RE = re.compile(
     r"\b(?:test-?retest|retest)[^.]{0,120}\b(?:n\s*=\s*(\d+)|(\d+)\s+participants?)\b",
+    flags=re.IGNORECASE,
+)
+_RELIABILITY_STUDY_SAMPLE_RE = re.compile(
+    r"\b(\d+)\s+(?:participants?|patients?|subjects?)?\s*(?:in|for)\s+(?:the\s+)?"
+    r"reliability\s+study\b",
     flags=re.IGNORECASE,
 )
 _BAL_GROUP_SAMPLE_RE = re.compile(
@@ -177,8 +218,10 @@ _TARGET_PRIORITY_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(r"\bobjective of this study\b", re.IGNORECASE),
 )
+_PARENTHETICAL_ACRONYM_RE = re.compile(r"\(([A-Z][A-Z0-9\-]*(?:\s+\d+(?:\.\d+)*)?)\)")
 _COMPARATOR_CONTEXT_RE = re.compile(
-    r"\b(by comparing|compared with|correlation between|correlations? of)\b",
+    r"\b(by comparing|compared with|comparison(?:s)? with|correlation(?:s)? (?:between|with)|"
+    r"correlated with|association (?:between|with))\b",
     re.IGNORECASE,
 )
 _GOLD_STANDARD_RE = re.compile(r"\bgold standard\b", re.IGNORECASE)
@@ -440,10 +483,14 @@ def _build_instrument_contexts(
                 (),
             ),
         )
-        if role in (
-            InstrumentContextRole.TARGET_UNDER_APPRAISAL,
-            InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
-        ) and target_id is None:
+        if (
+            role
+            in (
+                InstrumentContextRole.TARGET_UNDER_APPRAISAL,
+                InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+            )
+            and target_id is None
+        ):
             target_id = context.instrument_id
         if role in (InstrumentContextRole.COMPARATOR, InstrumentContextRole.COMPARATOR_ONLY):
             comparator_ids.append(context.instrument_id)
@@ -490,7 +537,7 @@ def _extract_preferred_instrument_name_fields(
         strongest = max(record.strength for record in records)
 
         # Keep only high-confidence instrument entities as standalone contexts.
-        if mention_count < 2 and strongest < 4:
+        if mention_count < 2 and strongest < 5:
             continue
 
         raw_text = " || ".join(dict.fromkeys(record.raw_text for record in records))
@@ -528,11 +575,8 @@ def _collect_instrument_mentions(
     for sentence in sentences:
         if _is_reference_sentence(sentence) or _is_keyword_sentence(sentence):
             continue
-        if _is_keyword_sentence(sentence):
-            continue
 
         text = sentence.provenance.raw_text
-        text_lower = text.lower()
         context_bonus = 2 if _INSTRUMENT_CONTEXT_RE.search(text) else 0
         context_penalty = -3 if _NON_INSTRUMENT_CONTEXT_RE.search(text) else 0
 
@@ -594,6 +638,16 @@ def _collect_instrument_mentions(
                 sentence=sentence,
                 raw_value="ABC scale",
                 normalized_name="ABC",
+                base_strength=3,
+                context_bonus=context_bonus,
+                context_penalty=context_penalty,
+            )
+        if _GPS_FULL_RE.search(text) or _GPS_ABBR_RE.search(text):
+            _add_instrument_mention(
+                by_key=by_key,
+                sentence=sentence,
+                raw_value="GPS",
+                normalized_name="GPS",
                 base_strength=3,
                 context_bonus=context_bonus,
                 context_penalty=context_penalty,
@@ -682,21 +736,44 @@ def _collect_instrument_mentions(
             )
 
         for match in _INSTRUMENT_LABEL_RE.finditer(text):
-            value = _normalize_instrument_name_candidate(match.group(1))
-            if not value:
-                continue
-            if _is_false_instrument_candidate(value, sentence):
-                continue
-            key = (value, sentence.id)
-            draft = _InstrumentMentionDraft(
-                normalized_name=value,
-                raw_text=match.group(0),
-                evidence_span_id=sentence.id,
-                strength=max(2 + context_bonus + context_penalty, 1),
-            )
-            current = by_key.get(key)
-            if current is None or draft.strength > current.strength:
-                by_key[key] = draft
+            raw_items = _split_outcome_or_instrument_list(match.group(1))
+            if not raw_items:
+                raw_items = (match.group(1),)
+            for raw_item in raw_items:
+                value = _normalize_instrument_name_candidate(raw_item)
+                if not value:
+                    continue
+                if _is_false_instrument_candidate(value, sentence):
+                    continue
+                key = (value, sentence.id)
+                draft = _InstrumentMentionDraft(
+                    normalized_name=value,
+                    raw_text=match.group(0),
+                    evidence_span_id=sentence.id,
+                    strength=max(2 + context_bonus + context_penalty, 1),
+                )
+                current = by_key.get(key)
+                if current is None or draft.strength > current.strength:
+                    by_key[key] = draft
+
+        outcome_list_match = _OUTCOME_LIST_RE.search(text)
+        if outcome_list_match:
+            for item in _split_outcome_or_instrument_list(outcome_list_match.group(1)):
+                value = _normalize_instrument_name_candidate(item)
+                if not value:
+                    continue
+                if _is_false_instrument_candidate(value, sentence):
+                    continue
+                key = (value, sentence.id)
+                draft = _InstrumentMentionDraft(
+                    normalized_name=value,
+                    raw_text=item,
+                    evidence_span_id=sentence.id,
+                    strength=max(3 + context_bonus + context_penalty, 1),
+                )
+                current = by_key.get(key)
+                if current is None or draft.strength > current.strength:
+                    by_key[key] = draft
 
         if _INSTRUMENT_CONTEXT_RE.search(text):
             for match in _INSTRUMENT_ACRONYM_RE.finditer(text):
@@ -707,7 +784,10 @@ def _collect_instrument_mentions(
                 if _is_false_instrument_candidate(value, sentence):
                     continue
                 if not (
-                    "-" in value or value.startswith("PROM") or value in {"SIGAM", "ABC", "TUG"}
+                    "-" in value
+                    or value.startswith("PROM")
+                    or value in {"SIGAM", "ABC", "TUG"}
+                    or re.search(r"\d+\.\d+", token)
                 ):
                     continue
                 key = (value, sentence.id)
@@ -722,8 +802,13 @@ def _collect_instrument_mentions(
                     by_key[key] = draft
 
         # Keep explicit abbreviated mentions inside long-form clauses.
-        if "questionnaire" in text_lower and "(" in text and ")" in text:
-            for token in re.findall(r"\(([A-Za-z0-9\- ]{2,20})\)", text):
+        if _INSTRUMENT_CONTEXT_RE.search(text) and "(" in text and ")" in text:
+            for token in re.findall(r"\(([A-Za-z0-9\- .]{2,20})\)", text):
+                compact_token = token.strip()
+                if len(compact_token.split()) > 2:
+                    continue
+                if not re.search(r"[A-Z]{2,}", compact_token):
+                    continue
                 value = _normalize_instrument_name_candidate(token)
                 if not value:
                     continue
@@ -734,7 +819,7 @@ def _collect_instrument_mentions(
                     normalized_name=value,
                     raw_text=token,
                     evidence_span_id=sentence.id,
-                    strength=max(2 + context_bonus + context_penalty, 1),
+                    strength=max(3 + context_bonus + context_penalty, 1),
                 )
                 current = by_key.get(key)
                 if current is None or draft.strength > current.strength:
@@ -823,16 +908,27 @@ def _extract_instrument_version(
 ) -> ContextFieldExtraction:
     drafts: list[_CandidateDraft] = []
     pattern = re.compile(
-        r"(?:instrument\s+version|version|\bv)\s*[:=-]?\s*(v?\d+(?:\.\d+)*)",
+        r"(?:(instrument|questionnaire|scale|measure|tool|test|form)\s+version|version|\bv)"
+        r"\s*[:=-]?\s*(v?\d+(?:\.\d+)*)",
         flags=re.IGNORECASE,
     )
 
     for sentence in sentences:
+        if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
+            continue
         text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        if _SOFTWARE_VERSION_CONTEXT_RE.search(text):
+            continue
         match = pattern.search(text)
         if not match:
             continue
-        normalized = _normalize_version(match.group(1))
+        explicit_instrument_prefix = match.group(1)
+        if explicit_instrument_prefix is None and not _INSTRUMENT_VERSION_CONTEXT_RE.search(text):
+            continue
+        if "statistical analysis" in text_lower and "version" in text_lower:
+            continue
+        normalized = _normalize_version(match.group(2))
         if _NOT_REPORTED_RE.search(normalized):
             continue
         drafts.append(
@@ -966,8 +1062,7 @@ def _extract_target_population(
                 and "osseointegr" in text_lower
             ):
                 normalized = (
-                    "adults with transfemoral amputation "
-                    "undergoing osseointegration surgery"
+                    "adults with transfemoral amputation " "undergoing osseointegration surgery"
                 )
             drafts.append(
                 _CandidateDraft(
@@ -1251,6 +1346,16 @@ def _extract_validation_sample_n(
             for token in ("validation", "validity", "administered", "sample size")
         ):
             continue
+        explicit_study_sample = _VALIDITY_STUDY_SAMPLE_RE.search(text)
+        if explicit_study_sample:
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=explicit_study_sample.group(0),
+                    normalized_value=int(explicit_study_sample.group(1)),
+                    evidence_span_id=sentence.id,
+                )
+            )
+            continue
         match = _VALIDATION_SAMPLE_RE.search(text)
         if match:
             value = _word_or_number_to_int(match.group(1))
@@ -1263,18 +1368,6 @@ def _extract_validation_sample_n(
                     )
                 )
                 continue
-        for token in _extract_number_tokens(text):
-            if token.value <= 0:
-                continue
-            if "validity study" in text_lower or "validation study" in text_lower:
-                drafts.append(
-                    _CandidateDraft(
-                        raw_text=token.raw_text,
-                        normalized_value=token.value,
-                        evidence_span_id=sentence.id,
-                    )
-                )
-
     drafts = _prefer_majority_value(drafts)
 
     return _build_field_extraction(
@@ -1330,7 +1423,21 @@ def _extract_retest_sample_n(
             continue
         text = sentence.provenance.raw_text
         text_lower = text.lower()
-        if "retest" not in text_lower and "test-retest" not in text_lower:
+        if (
+            "retest" not in text_lower
+            and "test-retest" not in text_lower
+            and "reliability study" not in text_lower
+        ):
+            continue
+        reliability_study = _RELIABILITY_STUDY_SAMPLE_RE.search(text)
+        if reliability_study:
+            drafts.append(
+                _CandidateDraft(
+                    raw_text=reliability_study.group(0),
+                    normalized_value=int(reliability_study.group(1)),
+                    evidence_span_id=sentence.id,
+                )
+            )
             continue
 
         explicit = _RETEST_SAMPLE_RE.search(text)
@@ -1603,8 +1710,7 @@ def _extract_follow_up_interval(
         if "historical interval" in text_lower:
             continue
         if (
-            ("stage 1" in text_lower and "stage 2" in text_lower)
-            or "two stages" in text_lower
+            ("stage 1" in text_lower and "stage 2" in text_lower) or "two stages" in text_lower
         ) and "retest" not in text_lower:
             continue
         if (
@@ -1630,9 +1736,7 @@ def _extract_follow_up_interval(
             drafts.append(
                 _CandidateDraft(
                     raw_text=text,
-                    normalized_value=(
-                        f"{normalized_start} to {normalized_end} {normalized_unit}"
-                    ),
+                    normalized_value=(f"{normalized_start} to {normalized_end} {normalized_unit}"),
                     evidence_span_id=sentence.id,
                 )
             )
@@ -1686,10 +1790,7 @@ def _extract_recruitment_setting(
         text = sentence.provenance.raw_text
         text_lower = text.lower()
         heading_tokens = " ".join(sentence.heading_path).lower()
-        if any(
-            token in text_lower
-            for token in ("email:", "@", "correspondence", "disclaimer")
-        ):
+        if any(token in text_lower for token in ("email:", "@", "correspondence", "disclaimer")):
             continue
         if any(token in heading_tokens for token in ("author", "affiliation", "acknowledg")):
             continue
@@ -1745,6 +1846,17 @@ def _extract_measurement_property_partitions(
     property_needles: tuple[tuple[str, str], ...] = (
         ("content validity", "content_validity"),
         ("structural validity", "structural_validity"),
+        ("rasch", "structural_validity"),
+        ("irt", "structural_validity"),
+        ("item fit", "structural_validity"),
+        ("infit", "structural_validity"),
+        ("outfit", "structural_validity"),
+        ("local dependence", "structural_validity"),
+        ("local independence", "structural_validity"),
+        ("unidimensionality", "structural_validity"),
+        ("dimensionality", "structural_validity"),
+        ("residual pca", "structural_validity"),
+        ("threshold ordering", "structural_validity"),
         ("internal consistency", "internal_consistency"),
         (
             "cross-cultural validity",
@@ -2258,6 +2370,10 @@ def _normalize_text_value(raw_value: str) -> str:
 
 def _normalize_instrument_name_candidate(raw_value: str) -> str:
     value = _normalize_text_value(raw_value).strip("()")
+    parenthetical_match = _PARENTHETICAL_ACRONYM_RE.search(value)
+    if parenthetical_match:
+        # Favor explicit short-form labels in parentheses for stable grouping.
+        value = _normalize_text_value(parenthetical_match.group(1))
     value_lower = value.lower()
 
     if not value:
@@ -2270,6 +2386,8 @@ def _normalize_instrument_name_candidate(raw_value: str) -> str:
         return "Houghton"
     if _ABC_FULL_RE.search(value) or _ABC_ABBR_RE.search(value):
         return "ABC"
+    if _GPS_FULL_RE.search(value) or _GPS_ABBR_RE.search(value):
+        return "GPS"
     if _TWO_MWT_FULL_RE.search(value) or _TWO_MWT_ABBR_RE.search(value):
         return "2-MWT"
     if _TUG_FULL_RE.search(value) or _TUG_ABBR_RE.search(value):
@@ -2292,6 +2410,15 @@ def _normalize_instrument_name_candidate(raw_value: str) -> str:
         value = value[4:]
 
     return _normalize_text_value(value)
+
+
+def _split_outcome_or_instrument_list(raw_value: str) -> tuple[str, ...]:
+    text = re.sub(r"\([^)]*\)", "", raw_value)
+    text = text.replace(" and ", ",")
+    text = text.replace(" or ", ",")
+    items = [item.strip(" :;,.") for item in text.split(",")]
+    filtered = [item for item in items if item]
+    return tuple(dict.fromkeys(filtered))
 
 
 def _normalize_version(raw_value: str) -> str:
@@ -2319,7 +2446,9 @@ def _classify_instrument_type(
     )
     prom_context_pattern = re.compile(
         r"(questionnaire|scale|translated|translation|cross-?cultur|adapt(?:ed|ation)|"
-        r"psychometric|internal consistency|cronbach|kr-?20|version)",
+        r"psychometric|internal consistency|cronbach|kr-?20|version|"
+        r"rasch|irt|item\s+fit|infit|outfit|local\s+independence|local\s+dependence|"
+        r"unidimensional(?:ity)?|dimensionality|residual\s+pca|threshold\s+ordering)",
         re.IGNORECASE,
     )
     performance_name_pattern = re.compile(
@@ -2331,7 +2460,7 @@ def _classify_instrument_type(
         re.IGNORECASE,
     )
     pbom_context_pattern = re.compile(
-        r"(performance-?based\s+outcome|functional\s+test|mobility\s+test)",
+        r"(performance-?based\s+outcome|functional\s+test|mobility\s+test|mobility\s+predictor)",
         re.IGNORECASE,
     )
 
@@ -2440,6 +2569,10 @@ def _infer_instrument_roles(
         normalized_name: instrument_id
         for instrument_id, normalized_name in normalized_instrument_names
     }
+    by_id: dict[StableId, str] = {
+        instrument_id: normalized_name
+        for instrument_id, normalized_name in normalized_instrument_names
+    }
     target_scores: dict[StableId, int] = {
         instrument_id: 0 for instrument_id, _ in normalized_instrument_names
     }
@@ -2468,12 +2601,15 @@ def _infer_instrument_roles(
         re.IGNORECASE,
     )
     comparator_relation_re = re.compile(
-        r"\b(?:compared?\s+with|comparison\s+with|by comparing|"
-        r"correlation(?:s)?\s+(?:between|with)|association\s+between)\b",
+        r"\b(?:compared?\s+with|comparison(?:s)?\s+with|by comparing|"
+        r"correlat(?:ed|ion(?:s)?)\s+(?:between|with)|association\s+(?:between|with))\b",
         re.IGNORECASE,
     )
     appraisal_re = re.compile(
-        r"\b(?:reliability|validity|internal consistency|measurement error|responsiveness)\b",
+        (
+            r"\b(?:reliability|validity|internal consistency|measurement error|"
+            r"responsiveness|psychometric|rasch|irt)\b"
+        ),
         re.IGNORECASE,
     )
     outcome_re = re.compile(
@@ -2485,6 +2621,16 @@ def _infer_instrument_roles(
         r"\b(?:anchor-based|anchor based|mcid|mic)\b[^.]{0,120}\b(?:global score|anchor)\b",
         re.IGNORECASE,
     )
+    interpretability_outcome_re = re.compile(
+        r"\b(?:mcid|mic|mid|anchor-?based|distribution-?based)\b",
+        re.IGNORECASE,
+    )
+    interpretability_scores: dict[StableId, int] = {
+        instrument_id: 0 for instrument_id, _ in normalized_instrument_names
+    }
+    joint_psychometric_scores: dict[StableId, int] = {
+        instrument_id: 0 for instrument_id, _ in normalized_instrument_names
+    }
 
     for sentence in sentences:
         if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
@@ -2494,7 +2640,7 @@ def _infer_instrument_roles(
         mentioned_ids = [
             instrument_id
             for normalized_name, instrument_id in by_name.items()
-            if re.search(rf"\b{re.escape(normalized_name.lower())}\b", text_lower)
+            if _instrument_text_position(normalized_name, text_lower) >= 0
         ]
         if not mentioned_ids:
             continue
@@ -2512,19 +2658,41 @@ def _infer_instrument_roles(
                 break
 
         if study_intent_re.search(text) and appraisal_re.search(text):
-            for instrument_id in mentioned_ids:
-                target_scores[instrument_id] += 4
-                target_evidence[instrument_id].append(sentence.id)
+            comparator_match = _COMPARATOR_CONTEXT_RE.search(text) or comparator_relation_re.search(
+                text
+            )
+            if comparator_match:
+                comparator_anchor = comparator_match.start()
+                ordered_mentions = sorted(
+                    (
+                        (_instrument_text_position(normalized_name, text_lower), instrument_id)
+                        for normalized_name, instrument_id in by_name.items()
+                        if _instrument_text_position(normalized_name, text_lower) >= 0
+                    ),
+                    key=lambda item: item[0],
+                )
+                for position, instrument_id in ordered_mentions:
+                    if position < comparator_anchor:
+                        target_scores[instrument_id] += 4
+                        target_evidence[instrument_id].append(sentence.id)
+                        if len(mentioned_ids) >= 2:
+                            joint_psychometric_scores[instrument_id] += 1
+                    else:
+                        comparator_scores[instrument_id] += 1
+                        comparator_evidence[instrument_id].append(sentence.id)
+            else:
+                for instrument_id in mentioned_ids:
+                    target_scores[instrument_id] += 4
+                    target_evidence[instrument_id].append(sentence.id)
+                    if len(mentioned_ids) >= 2:
+                        joint_psychometric_scores[instrument_id] += 1
 
         if outcome_re.search(text):
             for instrument_id in mentioned_ids:
                 outcome_scores[instrument_id] += 2
                 outcome_evidence[instrument_id].append(sentence.id)
 
-        if (
-            "patient-reported outcome" in text_lower
-            and len(mentioned_ids) >= 2
-        ):
+        if "patient-reported outcome" in text_lower and len(mentioned_ids) >= 2:
             for instrument_id in mentioned_ids:
                 outcome_scores[instrument_id] += 2
                 outcome_evidence[instrument_id].append(sentence.id)
@@ -2534,27 +2702,37 @@ def _infer_instrument_roles(
                 anchor_scores[instrument_id] += 3
                 outcome_scores[instrument_id] += 1
                 outcome_evidence[instrument_id].append(sentence.id)
-
-        if _COMPARATOR_CONTEXT_RE.search(text) or comparator_relation_re.search(text):
+        if interpretability_outcome_re.search(text):
             for instrument_id in mentioned_ids:
-                comparator_scores[instrument_id] += 2
-                comparator_evidence[instrument_id].append(sentence.id)
-            # In explicit comparator clauses, promote the first mentioned
-            # instrument as likely target and later mentions as comparators.
+                interpretability_scores[instrument_id] += 2
+                outcome_scores[instrument_id] += 1
+                outcome_evidence[instrument_id].append(sentence.id)
+
+        comparator_match = _COMPARATOR_CONTEXT_RE.search(text) or comparator_relation_re.search(
+            text
+        )
+        if comparator_match:
+            comparator_anchor = comparator_match.start()
             ordered_mentions = sorted(
                 (
-                    (text_lower.find(normalized_name.lower()), instrument_id)
+                    (_instrument_text_position(normalized_name, text_lower), instrument_id)
                     for normalized_name, instrument_id in by_name.items()
-                    if normalized_name.lower() in text_lower
+                    if _instrument_text_position(normalized_name, text_lower) >= 0
                 ),
                 key=lambda item: item[0],
             )
             if len(ordered_mentions) >= 2:
                 lead_id = ordered_mentions[0][1]
-                target_scores[lead_id] += 2
-                target_evidence[lead_id].append(sentence.id)
+                lead_position = ordered_mentions[0][0]
+                if lead_position < comparator_anchor:
+                    target_scores[lead_id] += 2
+                    target_evidence[lead_id].append(sentence.id)
                 for _, instrument_id in ordered_mentions[1:]:
                     comparator_scores[instrument_id] += 3
+                    comparator_evidence[instrument_id].append(sentence.id)
+            else:
+                for instrument_id in mentioned_ids:
+                    comparator_scores[instrument_id] += 1
                     comparator_evidence[instrument_id].append(sentence.id)
 
         if "by comparing" in text_lower and " to " in text_lower:
@@ -2570,9 +2748,9 @@ def _infer_instrument_roles(
         if study_intent_re.search(text) and len(mentioned_ids) > 1:
             first_mention_positions = sorted(
                 (
-                    (text_lower.find(normalized_name.lower()), instrument_id)
+                    (_instrument_text_position(normalized_name, text_lower), instrument_id)
                     for normalized_name, instrument_id in by_name.items()
-                    if normalized_name.lower() in text_lower
+                    if _instrument_text_position(normalized_name, text_lower) >= 0
                 ),
                 key=lambda item: item[0],
             )
@@ -2585,6 +2763,7 @@ def _infer_instrument_roles(
                     comparator_evidence[instrument_id].append(sentence.id)
 
     assignments: dict[StableId, tuple[InstrumentContextRole, str, tuple[StableId, ...]]] = {}
+    selected_target_id: StableId | None = None
 
     if study_intent is StudyIntent.LONGITUDINAL_OUTCOME:
         ranked_outcome = sorted(
@@ -2653,15 +2832,174 @@ def _infer_instrument_roles(
                 )
         return assignments
 
-    ranked = sorted(
-        target_scores.items(),
-        key=lambda item: (item[1] - comparator_scores[item[0]], item[1], str(item[0])),
-        reverse=True,
-    )
+    if study_intent is StudyIntent.MIXED:
+        outcome_positive = [
+            instrument_id for instrument_id, score in outcome_scores.items() if score > 0
+        ]
+        strongest_target_signal = max(target_scores.values()) if target_scores else 0
+        interpretability_positive = [
+            instrument_id
+            for instrument_id, score in interpretability_scores.items()
+            if score > 0 and outcome_scores[instrument_id] > 0
+        ]
+        if len(interpretability_positive) >= 2:
+            for instrument_id in interpretability_positive:
+                assignments[instrument_id] = (
+                    InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+                    (
+                        "Interpretability-focused mixed study with multiple co-studied "
+                        "outcomes; retained as co-primary outcome instrument."
+                    ),
+                    tuple(dict.fromkeys(outcome_evidence[instrument_id])),
+                )
+
+            for instrument_id, _ in normalized_instrument_names:
+                if instrument_id in assignments:
+                    continue
+                comparator_evidence_ids = tuple(dict.fromkeys(comparator_evidence[instrument_id]))
+                outcome_evidence_ids = tuple(dict.fromkeys(outcome_evidence[instrument_id]))
+                if outcome_scores[instrument_id] > 0:
+                    assignments[instrument_id] = (
+                        InstrumentContextRole.SECONDARY_OUTCOME_INSTRUMENT,
+                        (
+                            "Mentioned as an additional studied outcome in an "
+                            "interpretability-focused mixed study."
+                        ),
+                        outcome_evidence_ids,
+                    )
+                    continue
+                if comparator_scores[instrument_id] > 0:
+                    assignments[instrument_id] = (
+                        InstrumentContextRole.COMPARATOR_ONLY,
+                        "Detected primarily in comparator context relative to co-studied outcomes.",
+                        comparator_evidence_ids,
+                    )
+                    continue
+                assignments[instrument_id] = (
+                    InstrumentContextRole.BACKGROUND_ONLY,
+                    "Mentioned without direct co-outcome evidence in this mixed study context.",
+                    outcome_evidence_ids or comparator_evidence_ids,
+                )
+            return assignments
+
+        if len(outcome_positive) >= 2 and strongest_target_signal <= 2:
+            ranked_outcome = sorted(
+                outcome_scores.items(),
+                key=lambda item: (
+                    item[1],
+                    anchor_scores[item[0]],
+                    target_scores[item[0]],
+                    str(item[0]),
+                ),
+                reverse=True,
+            )
+            max_outcome = ranked_outcome[0][1] if ranked_outcome else 0
+            co_primary_ids = {
+                instrument_id
+                for instrument_id, score in ranked_outcome
+                if score > 0 and score >= max(2, max_outcome - 1)
+            }
+
+            for instrument_id in co_primary_ids:
+                assignments[instrument_id] = (
+                    InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+                    (
+                        "Multiple direct outcome signals detected; retained as co-primary "
+                        "outcome instrument."
+                    ),
+                    tuple(dict.fromkeys(outcome_evidence[instrument_id])),
+                )
+
+            for instrument_id, _ in normalized_instrument_names:
+                if instrument_id in assignments:
+                    continue
+                comparator_evidence_ids = tuple(dict.fromkeys(comparator_evidence[instrument_id]))
+                outcome_evidence_ids = tuple(dict.fromkeys(outcome_evidence[instrument_id]))
+                if comparator_scores[instrument_id] > outcome_scores[instrument_id]:
+                    assignments[instrument_id] = (
+                        InstrumentContextRole.COMPARATOR_ONLY,
+                        "Detected primarily in comparator context relative to co-primary outcomes.",
+                        comparator_evidence_ids,
+                    )
+                    continue
+                if outcome_scores[instrument_id] > 0:
+                    assignments[instrument_id] = (
+                        InstrumentContextRole.SECONDARY_OUTCOME_INSTRUMENT,
+                        "Detected as secondary outcome in a mixed, outcome-oriented study context.",
+                        outcome_evidence_ids,
+                    )
+                else:
+                    assignments[instrument_id] = (
+                        InstrumentContextRole.BACKGROUND_ONLY,
+                        (
+                            "Mentioned without direct outcome-appraisal evidence in this "
+                            "mixed study context."
+                        ),
+                        outcome_evidence_ids or comparator_evidence_ids,
+                    )
+            return assignments
+
+    if study_intent is StudyIntent.PSYCHOMETRIC_VALIDATION:
+        co_primary_ids = {
+            instrument_id
+            for instrument_id, score in target_scores.items()
+            if score > 0 and joint_psychometric_scores[instrument_id] > 0
+        }
+        if len(co_primary_ids) >= 2:
+            for instrument_id in co_primary_ids:
+                evidence_ids = tuple(
+                    dict.fromkeys(target_evidence[instrument_id] + outcome_evidence[instrument_id])
+                )
+                assignments[instrument_id] = (
+                    InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+                    (
+                        "Multiple instruments were directly appraised for psychometric "
+                        "properties in the same study context."
+                    ),
+                    evidence_ids,
+                )
+
+            for instrument_id, _ in normalized_instrument_names:
+                if instrument_id in assignments:
+                    continue
+                comparator_evidence_ids = tuple(dict.fromkeys(comparator_evidence[instrument_id]))
+                target_evidence_ids = tuple(dict.fromkeys(target_evidence[instrument_id]))
+                if comparator_scores[instrument_id] > target_scores[instrument_id]:
+                    assignments[instrument_id] = (
+                        InstrumentContextRole.COMPARATOR_ONLY,
+                        (
+                            "Detected primarily in comparator context relative to "
+                            "co-appraised psychometric targets."
+                        ),
+                        comparator_evidence_ids,
+                    )
+                else:
+                    assignments[instrument_id] = (
+                        InstrumentContextRole.ADDITIONAL,
+                        "Retained as an additional instrument mention without role dominance.",
+                        target_evidence_ids or comparator_evidence_ids,
+                    )
+            return assignments
+
+        ranked = sorted(
+            target_scores.items(),
+            key=lambda item: (
+                item[1] - comparator_scores[item[0]],
+                item[1],
+                str(item[0]),
+            ),
+            reverse=True,
+        )
+    else:
+        ranked = sorted(
+            target_scores.items(),
+            key=lambda item: (item[1] - comparator_scores[item[0]], item[1], str(item[0])),
+            reverse=True,
+        )
     if ranked and ranked[0][1] > 0:
-        target_id = ranked[0][0]
-        evidence_ids = tuple(dict.fromkeys(target_evidence[target_id]))
-        assignments[target_id] = (
+        selected_target_id = ranked[0][0]
+        evidence_ids = tuple(dict.fromkeys(target_evidence[selected_target_id]))
+        assignments[selected_target_id] = (
             InstrumentContextRole.TARGET_UNDER_APPRAISAL,
             (
                 "Highest target-signal instrument from study-intent and appraisal-context "
@@ -2675,14 +3013,41 @@ def _infer_instrument_roles(
             continue
         comparator_evidence_ids = tuple(dict.fromkeys(comparator_evidence[instrument_id]))
         target_evidence_ids = tuple(dict.fromkeys(target_evidence[instrument_id]))
+        outcome_evidence_ids = tuple(dict.fromkeys(outcome_evidence[instrument_id]))
+        if (
+            study_intent is StudyIntent.PSYCHOMETRIC_VALIDATION
+            and selected_target_id is not None
+            and instrument_id != selected_target_id
+            and _is_same_instrument_family(
+                by_id[instrument_id],
+                by_id[selected_target_id],
+            )
+        ):
+            assignments[instrument_id] = (
+                InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+                (
+                    "Instrument variant shares the same family stem as the selected "
+                    "psychometric target; retained as co-primary under appraisal."
+                ),
+                target_evidence_ids or outcome_evidence_ids,
+            )
+            continue
+        if (
+            study_intent is StudyIntent.PSYCHOMETRIC_VALIDATION
+            and selected_target_id is not None
+            and instrument_id != selected_target_id
+            and comparator_scores[instrument_id] > 0
+        ):
+            assignments[instrument_id] = (
+                InstrumentContextRole.COMPARATOR_ONLY,
+                "Validation-study comparator retained as comparator-only support instrument.",
+                comparator_evidence_ids,
+            )
+            continue
         if comparator_scores[instrument_id] > 0 and (
             target_scores[instrument_id] == 0
-            or
-            comparator_scores[instrument_id] >= target_scores[instrument_id]
-            or (
-                len(comparator_evidence_ids) >= 2
-                and target_scores[instrument_id] <= 3
-            )
+            or comparator_scores[instrument_id] >= target_scores[instrument_id]
+            or (len(comparator_evidence_ids) >= 2 and target_scores[instrument_id] <= 3)
         ):
             assignments[instrument_id] = (
                 InstrumentContextRole.COMPARATOR_ONLY,
@@ -2709,8 +3074,12 @@ def _classify_study_intent(
         re.IGNORECASE,
     )
     longitudinal_outcome_re = re.compile(
-        r"\b(?:patient-reported outcome|outcome measure|baseline|follow-up|"
-        r"complication|therapeutic study|intervention|mcid|mic|longitudinal)\b",
+        r"\b(?:baseline|follow-up|complication|therapeutic study|intervention|longitudinal)\b",
+        re.IGNORECASE,
+    )
+    interpretability_re = re.compile(
+        r"\b(?:mcid|mic|mid|min(?:imum|imal)\s+clinically\s+important\s+difference|"
+        r"anchor-?based|distribution-?based)\b",
         re.IGNORECASE,
     )
     psychometric_aim_re = re.compile(
@@ -2725,14 +3094,16 @@ def _classify_study_intent(
     )
     outcome_aim_re = re.compile(
         r"\b(?:aim|objective|purpose)\b[^.]{0,260}"
-        r"\b(?:outcome|improv(?:e|ed|ement)|complication|follow-up|"
+        r"\b(?:outcome|improv(?:e|ed|ement)|complication|follow-up|baseline|"
         r"therapeutic|intervention)\b",
         re.IGNORECASE,
     )
     psychometric_score = 0
     outcome_score = 0
+    interpretability_score = 0
     psychometric_evidence: list[StableId] = []
     outcome_evidence: list[StableId] = []
+    interpretability_evidence: list[StableId] = []
 
     for sentence in sentences:
         if _is_reference_sentence(sentence) or _is_background_sentence(sentence):
@@ -2750,6 +3121,9 @@ def _classify_study_intent(
         if outcome_aim_re.search(text):
             outcome_score += 3
             outcome_evidence.append(sentence.id)
+        if interpretability_re.search(text):
+            interpretability_score += 1
+            interpretability_evidence.append(sentence.id)
 
     if psychometric_score >= 6 and psychometric_score >= outcome_score + 1:
         return (
@@ -2769,6 +3143,17 @@ def _classify_study_intent(
             StudyIntent.PSYCHOMETRIC_VALIDATION,
             "Psychometric-validation signals dominated longitudinal outcome signals.",
             tuple(dict.fromkeys(psychometric_evidence)),
+        )
+    if interpretability_score > 0 and outcome_score < 6:
+        return (
+            StudyIntent.MIXED,
+            (
+                "Interpretability-focused (MIC/MCID) signals were present without clear "
+                "longitudinal dominance."
+            ),
+            tuple(
+                dict.fromkeys(interpretability_evidence + outcome_evidence + psychometric_evidence)
+            ),
         )
     return (
         StudyIntent.MIXED,
@@ -2852,6 +3237,63 @@ def _is_external_comparison_sentence(text_lower: str) -> bool:
     )
 
 
+def _instrument_text_position(normalized_name: str, text_lower: str) -> int:
+    needle = normalized_name.lower()
+    direct_match = re.search(
+        rf"(?<![A-Za-z0-9-]){re.escape(needle)}(?![A-Za-z0-9-])",
+        text_lower,
+    )
+    if direct_match:
+        return direct_match.start()
+
+    if normalized_name == "2-MWT":
+        full = _TWO_MWT_FULL_RE.search(text_lower)
+        if full:
+            return full.start()
+        short = _TWO_MWT_ABBR_RE.search(text_lower)
+        if short:
+            return short.start()
+        return -1
+
+    if normalized_name == "GPS":
+        full = _GPS_FULL_RE.search(text_lower)
+        if full:
+            return full.start()
+        short = _GPS_ABBR_RE.search(text_lower)
+        if short:
+            return short.start()
+        return -1
+
+    if normalized_name == "6-MWT":
+        full = _SIX_MWT_FULL_RE.search(text_lower)
+        if full:
+            return full.start()
+        short = _SIX_MWT_ABBR_RE.search(text_lower)
+        if short:
+            return short.start()
+        return -1
+
+    return -1
+
+
+def _is_same_instrument_family(first_name: str, second_name: str) -> bool:
+    first = re.sub(r"[^A-Za-z0-9]", "", first_name).upper()
+    second = re.sub(r"[^A-Za-z0-9]", "", second_name).upper()
+    if not first or not second or first == second:
+        return first == second and bool(first)
+
+    shorter, longer = sorted((first, second), key=len)
+    if len(shorter) < 3:
+        return False
+    if longer.startswith(shorter) and len(longer) - len(shorter) <= 6:
+        return True
+
+    common_prefix = len(os.path.commonprefix((first, second)))
+    if common_prefix < 3:
+        return False
+    return len(first) - common_prefix <= 6 and len(second) - common_prefix <= 6
+
+
 def _is_false_instrument_candidate(value: str, sentence: SentenceRecord) -> bool:
     value_lower = value.lower()
     sentence_lower = sentence.provenance.raw_text.lower()
@@ -2902,6 +3344,50 @@ def _is_false_instrument_candidate(value: str, sentence: SentenceRecord) -> bool
     if re.fullmatch(r"(?:cm|mm|m|sec|s|kg|yrs?|years?)", value_lower):
         return True
     if re.search(r"\b(?:email|copyright|disclaimer)\b", sentence_lower):
+        return True
+    if any(
+        token in value_lower
+        for token in (
+            "participants",
+            "participant",
+            "collected",
+            "recruited",
+            "underwent",
+            "follow-up visit",
+            "for analysis",
+        )
+    ):
+        return True
+    if re.search(
+        r"\b(?:baseline|follow-?up|month|months|year|years|stage|visit|surgery)\b",
+        value_lower,
+    ) and not any(
+        token in value_lower
+        for token in (
+            "questionnaire",
+            "scale",
+            "instrument",
+            "measure",
+            "test",
+            "index",
+            "velocity",
+            "walk",
+        )
+    ):
+        return True
+    if len(value.split()) > 8 and not any(
+        token in value_lower
+        for token in (
+            "questionnaire",
+            "scale",
+            "instrument",
+            "measure",
+            "test",
+            "index",
+            "velocity",
+            "score",
+        )
+    ):
         return True
     if _NON_INSTRUMENT_CONTEXT_RE.search(sentence_lower) and not _INSTRUMENT_CONTEXT_RE.search(
         sentence_lower

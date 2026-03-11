@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +53,7 @@ from cosmin_assistant.extract import (
     StatisticCandidate,
     StatisticType,
     StudyContextExtractionResult,
+    StudyIntent,
     extract_context_from_parsed_document,
     extract_statistics_from_parsed_document,
     parse_markdown_file,
@@ -122,6 +125,12 @@ _SYNTHESIS_INCLUDED_STATUSES: tuple[PropertyActivationStatus, ...] = (
     PropertyActivationStatus.INTERPRETABILITY_ONLY,
     PropertyActivationStatus.REVIEWER_REQUIRED,
 )
+_N_FOR_INSTRUMENT_LABEL_RE = re.compile(
+    r"\b[nN]\s*=\s*(\d+)\s*(?:for|in)\s+([A-Za-z0-9][A-Za-z0-9\-\s]{1,120})"
+)
+_INSTRUMENT_LABEL_WITH_N_RE = re.compile(
+    r"([A-Za-z0-9][A-Za-z0-9\-\s]{1,120})\s*\$?\(\s*[nN]\s*=\s*(\d+)\s*\)\$?"
+)
 
 
 @dataclass(frozen=True)
@@ -164,6 +173,10 @@ def run_provisional_assessment(
 
     study_context = context.study_contexts[0]
     study_id = study_context.study_id
+    instrument_sample_size_index = _build_instrument_sample_size_index(
+        parsed_document=parsed,
+        context=context,
+    )
 
     assessment_contexts = _resolve_assessment_instrument_contexts(
         context=context,
@@ -174,6 +187,7 @@ def run_provisional_assessment(
     measurement_results: list[MeasurementPropertyRatingResult] = []
     activation_decisions: list[PropertyActivationDecision] = []
     measurement_result_keys: dict[str, tuple[str, str]] = {}
+    result_sample_sizes: dict[str, int | None] = {}
 
     structural_by_instrument: dict[str, MeasurementPropertyRatingResult] = {}
 
@@ -195,6 +209,7 @@ def run_provisional_assessment(
                 property_name=property_name,
                 instrument_candidates=instrument_candidates,
                 target_instrument_name=normalized_instrument_name,
+                parsed_document=parsed,
             )
             for property_name in _MEASUREMENT_PROPERTIES_IN_ORDER
         )
@@ -212,6 +227,12 @@ def run_provisional_assessment(
                 candidates=instrument_candidates,
                 measurement_property=decision.measurement_property,
             )
+            resolved_sample_size = _resolve_sample_size_for_result(
+                study_context=study_context,
+                instrument_context=instrument_context,
+                measurement_property=decision.measurement_property,
+                instrument_sample_size_index=instrument_sample_size_index,
+            )
 
             if (
                 decision.activation_status
@@ -222,12 +243,14 @@ def run_provisional_assessment(
                     instrument_id=instrument_id,
                     decision=decision,
                     candidates=property_candidates,
+                    sample_size=resolved_sample_size,
                 )
                 measurement_results.append(non_direct_result)
                 measurement_result_keys[non_direct_result.id] = (
                     non_direct_result.instrument_id,
                     non_direct_result.measurement_property,
                 )
+                result_sample_sizes[non_direct_result.id] = resolved_sample_size
                 continue
 
             box_bundle, rating_result = _execute_direct_property_pipeline(
@@ -237,24 +260,27 @@ def run_provisional_assessment(
                 measurement_property=decision.measurement_property,
                 candidates=property_candidates,
                 fallback_evidence_id=fallback_evidence_id,
-                sample_size=_resolve_sample_size_for_property(
-                    study_context=study_context,
-                    measurement_property=decision.measurement_property,
-                ),
+                sample_size=resolved_sample_size,
                 study_context=study_context,
                 structural_prerequisite_result=structural_by_instrument.get(instrument_id),
             )
             if box_bundle is not None:
                 rob_assessments.append(box_bundle)
 
+            updated_inputs = dict(rating_result.inputs_used)
+            updated_inputs["sample_size_selected"] = resolved_sample_size
             rating_result = rating_result.model_copy(
-                update={"activation_status": decision.activation_status}
+                update={
+                    "activation_status": decision.activation_status,
+                    "inputs_used": updated_inputs,
+                }
             )
             measurement_results.append(rating_result)
             measurement_result_keys[rating_result.id] = (
                 rating_result.instrument_id,
                 rating_result.measurement_property,
             )
+            result_sample_sizes[rating_result.id] = resolved_sample_size
 
             if rating_result.measurement_property == MEASUREMENT_PROPERTY_STRUCTURAL_VALIDITY:
                 structural_by_instrument[instrument_id] = rating_result
@@ -277,10 +303,7 @@ def run_provisional_assessment(
             subscale=_first_string_value(instrument_lookup[result.instrument_id].subscale),
             measurement_property=result.measurement_property,
             rating=result.computed_rating,
-            sample_size=_resolve_sample_size_for_property(
-                study_context=study_context,
-                measurement_property=result.measurement_property,
-            ),
+            sample_size=result_sample_sizes.get(result.id),
             evidence_span_ids=result.evidence_span_ids or (fallback_evidence_id,),
             study_explanation=result.explanation,
             activation_status=result.activation_status,
@@ -288,6 +311,7 @@ def run_provisional_assessment(
         for result in measurement_results
         if result.activation_status in _SYNTHESIS_INCLUDED_STATUSES
     )
+    synthesis_inputs = _normalize_synthesis_inputs_by_instrument_family(synthesis_inputs)
     synthesis_results = synthesize_first_pass(synthesis_inputs)
 
     rob_by_key = {
@@ -361,6 +385,9 @@ def _resolve_assessment_instrument_contexts(
 ) -> tuple[InstrumentContextExtractionResult, ...]:
     if not context.instrument_contexts:
         return ()
+    study_intent = (
+        context.study_contexts[0].study_intent if context.study_contexts else StudyIntent.MIXED
+    )
 
     direct_candidate_hints = {
         _normalize_instrument_name(hint)
@@ -380,7 +407,10 @@ def _resolve_assessment_instrument_contexts(
             continue
         instrument_name = _first_string_value(instrument_context.instrument_name)
         normalized = _normalize_instrument_name(instrument_name or "") if instrument_name else ""
-        has_direct_signal = bool(normalized and normalized in direct_candidate_hints)
+        has_direct_signal = bool(normalized) and _hint_set_matches_target(
+            target_name=normalized,
+            hint_names=direct_candidate_hints,
+        )
         non_comparator_direct = _has_non_comparator_direct_signal(
             normalized_instrument_name=normalized,
             statistics=statistics,
@@ -392,6 +422,14 @@ def _resolve_assessment_instrument_contexts(
             InstrumentContextRole.SECONDARY_OUTCOME_INSTRUMENT,
         ):
             selected.append(instrument_context)
+            continue
+
+        if (
+            study_intent is StudyIntent.PSYCHOMETRIC_VALIDATION
+            and context.target_instrument_id is not None
+        ):
+            # In validation studies keep appraisal scoped to target-under-appraisal
+            # contexts unless the comparator was explicitly elevated above.
             continue
 
         if has_direct_signal and non_comparator_direct:
@@ -427,7 +465,10 @@ def _has_non_comparator_direct_signal(
         candidate_hints = {
             _normalize_instrument_name(hint) for hint in candidate.instrument_name_hints
         }
-        if normalized_instrument_name not in candidate_hints:
+        if not _hint_set_matches_target(
+            target_name=normalized_instrument_name,
+            hint_names=candidate_hints,
+        ):
             continue
 
         comparator_hints = {
@@ -435,7 +476,10 @@ def _has_non_comparator_direct_signal(
         }
         # Comparator-linked candidates should not be treated as direct
         # assessment evidence for the comparator instrument itself.
-        if comparator_hints and normalized_instrument_name in comparator_hints:
+        if _hint_set_matches_target(
+            target_name=normalized_instrument_name,
+            hint_names=comparator_hints,
+        ):
             continue
         return True
 
@@ -450,6 +494,7 @@ def _build_property_activation_decision(
     property_name: str,
     instrument_candidates: tuple[StatisticCandidate, ...],
     target_instrument_name: str,
+    parsed_document: ParsedMarkdownDocument,
 ) -> PropertyActivationDecision:
     property_candidates = _candidates_for_property(
         candidates=instrument_candidates,
@@ -478,7 +523,7 @@ def _build_property_activation_decision(
     )
 
     not_assessed_properties = _properties_not_assessed(study_context)
-    if property_name in not_assessed_properties:
+    if property_name in not_assessed_properties and not direct_candidates:
         evidence_ids = _field_evidence_span_ids(study_context.measurement_properties_not_assessed)
         return PropertyActivationDecision(
             id=stable_activation_id(
@@ -597,15 +642,29 @@ def _build_property_activation_decision(
                     "gold-standard rationale."
                 ),
             )
+        if _article_reports_no_gold_standard(parsed_document):
+            return _activation_from_candidates(
+                study_id=study_id,
+                instrument_context=instrument_context,
+                property_name=property_name,
+                status=PropertyActivationStatus.NOT_ASSESSED_IN_CURRENT_STUDY,
+                candidates=direct_candidates,
+                explanation=(
+                    "Criterion validity was not activated because the article explicitly "
+                    "reported the absence of a gold standard; comparator-based associations "
+                    "are routed under hypotheses testing for construct validity."
+                ),
+            )
         return _activation_from_candidates(
             study_id=study_id,
             instrument_context=instrument_context,
             property_name=property_name,
-            status=PropertyActivationStatus.REVIEWER_REQUIRED,
+            status=PropertyActivationStatus.NOT_ASSESSED_IN_CURRENT_STUDY,
             candidates=direct_candidates,
             explanation=(
-                "Criterion validity requires explicit gold-standard justification; current "
-                "evidence is routed for reviewer confirmation."
+                "Criterion validity was not activated because no explicit gold-standard "
+                "justification was reported; comparator-based associations are routed under "
+                "hypotheses testing for construct validity."
             ),
         )
 
@@ -938,6 +997,7 @@ def _build_non_direct_measurement_result(
     instrument_id: str,
     decision: PropertyActivationDecision,
     candidates: tuple[StatisticCandidate, ...],
+    sample_size: int | None,
 ) -> MeasurementPropertyRatingResult:
     uncertainty_status, reviewer_status = _activation_uncertainty(decision.activation_status)
     evidence_span_ids = decision.evidence_span_ids or merged_candidate_evidence(candidates)
@@ -961,6 +1021,7 @@ def _build_non_direct_measurement_result(
         inputs_used={
             "activation_status": decision.activation_status.value,
             "rating_input_source_flags": list(decision.rating_input_source_flags),
+            "sample_size_selected": sample_size,
         },
         evidence_span_ids=evidence_span_ids,
         activation_status=decision.activation_status,
@@ -993,9 +1054,7 @@ def _candidates_for_property(
 ) -> tuple[StatisticCandidate, ...]:
     route_by_property: dict[str, tuple[MeasurementPropertyRoute, ...]] = {
         MEASUREMENT_PROPERTY_STRUCTURAL_VALIDITY: (MeasurementPropertyRoute.STRUCTURAL_VALIDITY,),
-        MEASUREMENT_PROPERTY_INTERNAL_CONSISTENCY: (
-            MeasurementPropertyRoute.INTERNAL_CONSISTENCY,
-        ),
+        MEASUREMENT_PROPERTY_INTERNAL_CONSISTENCY: (MeasurementPropertyRoute.INTERNAL_CONSISTENCY,),
         MEASUREMENT_PROPERTY_CROSS_CULTURAL_VALIDITY: (
             MeasurementPropertyRoute.HYPOTHESES_TESTING_FOR_CONSTRUCT_VALIDITY,
         ),
@@ -1058,11 +1117,7 @@ def _field_evidence_span_ids(field: ContextFieldExtraction | None) -> tuple[str,
         return ()
     return tuple(
         sorted(
-            {
-                span_id
-                for candidate in field.candidates
-                for span_id in candidate.evidence_span_ids
-            }
+            {span_id for candidate in field.candidates for span_id in candidate.evidence_span_ids}
         )
     )
 
@@ -1092,6 +1147,28 @@ def _has_explicit_gold_standard_evidence(
         if "no accepted gold standard" in text_lower:
             continue
         if "gold standard" in text_lower:
+            return True
+    return False
+
+
+def _article_reports_no_gold_standard(parsed_document: ParsedMarkdownDocument) -> bool:
+    negative_patterns = (
+        "no gold standard",
+        "no gold standards",
+        "lack of a gold standard",
+        "lack of gold standard",
+        "without a gold standard",
+        "without gold standard",
+        "no accepted gold standard",
+    )
+    for sentence in parsed_document.sentences:
+        text_lower = sentence.provenance.raw_text.lower()
+        heading_lower = " ".join(sentence.heading_path).lower()
+        if "references" in heading_lower:
+            continue
+        if "gold standard" not in text_lower:
+            continue
+        if any(pattern in text_lower for pattern in negative_patterns):
             return True
     return False
 
@@ -1148,6 +1225,25 @@ def _hypotheses_prerequisite(
 
 def _is_change_analysis_candidate(candidate: StatisticCandidate) -> bool:
     text_lower = candidate.surrounding_text.lower()
+    if any(
+        token in text_lower
+        for token in (
+            "mcid",
+            "mic",
+            "mid",
+            "minimum clinically important difference",
+            "minimal clinically important difference",
+        )
+    ) and not any(
+        token in text_lower
+        for token in (
+            "responsiveness",
+            "effect size",
+            "standardized response mean",
+            "srm",
+        )
+    ):
+        return False
     if candidate.value_normalized == "longitudinal_change_reported":
         return True
     return any(token in text_lower for token in ("change", "baseline", "follow-up", "difference"))
@@ -1185,10 +1281,10 @@ def _resolve_sample_size_for_property(
             SampleSizeRole.OTHER,
         ),
         MEASUREMENT_PROPERTY_CONSTRUCT_VALIDITY: (
-            SampleSizeRole.RETEST,
-            SampleSizeRole.ANALYZED,
             SampleSizeRole.VALIDATION,
+            SampleSizeRole.ANALYZED,
             SampleSizeRole.ENROLLMENT,
+            SampleSizeRole.RETEST,
             SampleSizeRole.OTHER,
         ),
     }
@@ -1222,6 +1318,85 @@ def _resolve_sample_size_for_property(
         if value is not None:
             return value
     return None
+
+
+def _resolve_sample_size_for_result(
+    *,
+    study_context: StudyContextExtractionResult,
+    instrument_context: InstrumentContextExtractionResult,
+    measurement_property: str,
+    instrument_sample_size_index: dict[str, tuple[int, ...]],
+) -> int | None:
+    instrument_name = _first_string_value(instrument_context.instrument_name)
+    if instrument_name:
+        normalized_name = _normalize_instrument_name(instrument_name)
+        values = instrument_sample_size_index.get(normalized_name, ())
+        if values:
+            return _select_representative_sample_size(values)
+
+    return _resolve_sample_size_for_property(
+        study_context=study_context,
+        measurement_property=measurement_property,
+    )
+
+
+def _build_instrument_sample_size_index(
+    *,
+    parsed_document: ParsedMarkdownDocument,
+    context: ArticleContextExtractionResult,
+) -> dict[str, tuple[int, ...]]:
+    known_instruments = {
+        _normalize_instrument_name(name)
+        for item in context.instrument_contexts
+        for name in (_first_string_value(item.instrument_name),)
+        if name
+    }
+    if not known_instruments:
+        return {}
+
+    by_instrument: dict[str, list[int]] = {name: [] for name in known_instruments}
+    for sentence in parsed_document.sentences:
+        text = sentence.provenance.raw_text
+        by_instrument_for_sentence = _extract_instrument_sample_sizes_from_sentence(text=text)
+        for normalized_name, value in by_instrument_for_sentence:
+            if normalized_name in known_instruments:
+                by_instrument[normalized_name].append(value)
+
+    return {name: tuple(values) for name, values in by_instrument.items() if values}
+
+
+def _extract_instrument_sample_sizes_from_sentence(*, text: str) -> tuple[tuple[str, int], ...]:
+    extracted: list[tuple[str, int]] = []
+
+    for match in _N_FOR_INSTRUMENT_LABEL_RE.finditer(text):
+        value = int(match.group(1))
+        label = match.group(2).strip()
+        for candidate_label in _split_instrument_label_candidates(label):
+            normalized_name = _normalize_instrument_name(candidate_label)
+            extracted.append((normalized_name, value))
+
+    for match in _INSTRUMENT_LABEL_WITH_N_RE.finditer(text):
+        label = match.group(1).strip()
+        value = int(match.group(2))
+        for candidate_label in _split_instrument_label_candidates(label):
+            normalized_name = _normalize_instrument_name(candidate_label)
+            extracted.append((normalized_name, value))
+
+    return tuple(dict.fromkeys(extracted))
+
+
+def _split_instrument_label_candidates(raw_label: str) -> tuple[str, ...]:
+    normalized = raw_label.replace(" and ", ",")
+    parts = [item.strip(" :;,.()") for item in normalized.split(",")]
+    candidates = tuple(item for item in parts if item)
+    return candidates or (raw_label.strip(),)
+
+
+def _select_representative_sample_size(values: tuple[int, ...]) -> int:
+    counts = Counter(values)
+    max_count = max(counts.values())
+    top_values = [value for value, count in counts.items() if count == max_count]
+    return max(top_values)
 
 
 def _select_rating_candidates(
@@ -1265,10 +1440,103 @@ def _is_excluded_for_target(
         _normalize_instrument_name(hint) for hint in candidate.comparator_instrument_hints
     )
 
-    if instrument_hints and normalized_target not in instrument_hints:
+    if instrument_hints and not _hint_set_matches_target(
+        target_name=normalized_target,
+        hint_names=instrument_hints,
+    ):
         return True
 
-    return bool(comparator_hints and normalized_target not in instrument_hints)
+    return bool(
+        comparator_hints
+        and not _hint_set_matches_target(
+            target_name=normalized_target,
+            hint_names=instrument_hints,
+        )
+    )
+
+
+def _hint_set_matches_target(*, target_name: str, hint_names: set[str] | tuple[str, ...]) -> bool:
+    if not target_name or not hint_names:
+        return False
+    target_variants = _instrument_name_variants(target_name)
+    return any(
+        (_instrument_name_variants(hint_name) & target_variants)
+        or _same_instrument_family_name(hint_name, target_name)
+        for hint_name in hint_names
+    )
+
+
+def _instrument_name_variants(normalized_name: str) -> set[str]:
+    cleaned = normalized_name.strip()
+    if not cleaned:
+        return set()
+    variants = {cleaned}
+    without_decimal_version = re.sub(r"\d+\.\d+$", "", cleaned)
+    if without_decimal_version:
+        variants.add(without_decimal_version)
+    return {variant for variant in variants if variant}
+
+
+def _same_instrument_family_name(first_name: str, second_name: str) -> bool:
+    first = re.sub(r"[^A-Za-z0-9]", "", first_name).upper()
+    second = re.sub(r"[^A-Za-z0-9]", "", second_name).upper()
+    if not first or not second or first == second:
+        return first == second and bool(first)
+
+    shorter, longer = sorted((first, second), key=len)
+    if len(shorter) < 3:
+        return False
+    if longer.startswith(shorter) and len(longer) - len(shorter) <= 6:
+        return True
+
+    common_prefix = len(os.path.commonprefix((first, second)))
+    if common_prefix < 3:
+        return False
+    return len(first) - common_prefix <= 6 and len(second) - common_prefix <= 6
+
+
+def _normalize_synthesis_inputs_by_instrument_family(
+    synthesis_inputs: tuple[StudySynthesisInput, ...],
+) -> tuple[StudySynthesisInput, ...]:
+    grouped: dict[tuple[str, str], list[StudySynthesisInput]] = {}
+    for entry in synthesis_inputs:
+        grouped.setdefault((entry.study_id, entry.measurement_property), []).append(entry)
+
+    drop_ids: set[str] = set()
+    for entries in grouped.values():
+        if len(entries) < 2:
+            continue
+        names = [entry.instrument_name for entry in entries]
+        group_drop_ids = {
+            entry.id
+            for entry in entries
+            if _is_family_base_instrument_name(entry.instrument_name, names)
+        }
+        if len(group_drop_ids) == len(entries):
+            continue
+        drop_ids.update(group_drop_ids)
+
+    return tuple(entry for entry in synthesis_inputs if entry.id not in drop_ids)
+
+
+def _is_family_base_instrument_name(name: str, peer_names: list[str]) -> bool:
+    normalized_name = re.sub(r"[^A-Za-z0-9]", "", name).upper()
+    if len(normalized_name) < 3:
+        return False
+
+    for peer in peer_names:
+        if peer == name:
+            continue
+        normalized_peer = re.sub(r"[^A-Za-z0-9]", "", peer).upper()
+        if len(normalized_peer) <= len(normalized_name):
+            continue
+        if not _same_instrument_family_name(name, peer):
+            continue
+        shared_prefix = len(os.path.commonprefix((normalized_name, normalized_peer)))
+        if shared_prefix >= len(normalized_name):
+            return True
+
+    return False
 
 
 def _normalize_instrument_name(value: str) -> str:
@@ -1279,6 +1547,9 @@ def _normalize_instrument_name(value: str) -> str:
         "q tfa": "q-tfa",
         "questionnaire for persons with a transfemoral amputation": "q-tfa",
         "patient-reported outcomes measurement information system": "promis",
+        "gait profile score": "gps",
+        "two minute walk test": "2-mwt",
+        "2mwt": "2-mwt",
     }
     mapped = aliases.get(normalized, normalized)
     return mapped.upper() if mapped in {"sigam", "promis"} else mapped.replace(" ", "").upper()
@@ -1349,11 +1620,7 @@ def _box4_inputs(
             item_rating=(
                 CosminItemRating.VERY_GOOD
                 if has_alpha
-                else (
-                    CosminItemRating.NOT_APPLICABLE
-                    if has_kr20
-                    else CosminItemRating.INADEQUATE
-                )
+                else (CosminItemRating.NOT_APPLICABLE if has_kr20 else CosminItemRating.INADEQUATE)
             ),
             evidence_span_ids=alpha_evidence,
         ),
@@ -1362,11 +1629,7 @@ def _box4_inputs(
             item_rating=(
                 CosminItemRating.VERY_GOOD
                 if has_kr20
-                else (
-                    CosminItemRating.NOT_APPLICABLE
-                    if has_alpha
-                    else CosminItemRating.INADEQUATE
-                )
+                else (CosminItemRating.NOT_APPLICABLE if has_alpha else CosminItemRating.INADEQUATE)
             ),
             evidence_span_ids=kr20_evidence,
         ),
@@ -1595,9 +1858,7 @@ def _box9_inputs(
         BOX_9_ITEM_CODES[0]: BoxItemInput(
             item_code=BOX_9_ITEM_CODES[0],
             item_rating=(
-                CosminItemRating.ADEQUATE
-                if hypotheses_predefined
-                else CosminItemRating.DOUBTFUL
+                CosminItemRating.ADEQUATE if hypotheses_predefined else CosminItemRating.DOUBTFUL
             ),
             evidence_span_ids=evidence,
         ),
@@ -1645,9 +1906,7 @@ def _box10_inputs(
         BOX_10_ITEM_CODES[0]: BoxItemInput(
             item_code=BOX_10_ITEM_CODES[0],
             item_rating=(
-                CosminItemRating.ADEQUATE
-                if hypotheses_predefined
-                else CosminItemRating.DOUBTFUL
+                CosminItemRating.ADEQUATE if hypotheses_predefined else CosminItemRating.DOUBTFUL
             ),
             evidence_span_ids=evidence,
         ),

@@ -12,6 +12,12 @@ from cosmin_assistant.extract import (
 _FIXTURE_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "markdown" / "statistics_noisy_patterns.md"
 )
+_TABLE_ALPHA_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "markdown" / "statistics_table_alpha.md"
+)
+_AWAD_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "markdown" / "awad_pbom_validation.md"
+)
 
 
 def test_all_core_statistic_types_can_be_extracted() -> None:
@@ -123,3 +129,35 @@ def test_statistics_extraction_is_deterministic() -> None:
     second = extract_statistics_from_markdown_file(_FIXTURE_PATH)
 
     assert first == second
+
+
+def test_table_alpha_rows_are_routed_to_per_instrument_candidates() -> None:
+    result = extract_statistics_from_markdown_file(_TABLE_ALPHA_FIXTURE_PATH)
+
+    alpha_candidates = [
+        candidate
+        for candidate in result.candidates
+        if candidate.statistic_type is StatisticType.CRONBACH_ALPHA
+    ]
+
+    observed = {
+        (candidate.value_normalized, tuple(candidate.instrument_name_hints))
+        for candidate in alpha_candidates
+    }
+    assert (0.83, ("PEQ-MS",)) in observed
+    assert (0.8, ("PMQ 2.0",)) in observed
+
+
+def test_hyphenated_instrument_mentions_do_not_bleed_into_shorter_hints() -> None:
+    result = extract_statistics_from_markdown_file(_AWAD_FIXTURE_PATH)
+
+    icc_candidates = [
+        candidate
+        for candidate in result.candidates
+        if candidate.statistic_type is StatisticType.ICC
+        and "Test-retest reliability of COLD-TUG" in candidate.surrounding_text
+    ]
+
+    assert icc_candidates
+    assert all("COLD-TUG" in candidate.instrument_name_hints for candidate in icc_candidates)
+    assert all("TUG" not in candidate.instrument_name_hints for candidate in icc_candidates)

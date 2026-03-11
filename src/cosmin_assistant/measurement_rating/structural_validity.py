@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from numbers import Real
 
 from cosmin_assistant.extract.statistics_models import StatisticCandidate, StatisticType
 from cosmin_assistant.measurement_rating.common import (
@@ -26,11 +27,30 @@ from cosmin_assistant.models import (
 RULE_NAME_STRUCTURAL_VALIDITY = "MPR_STRUCTURAL_VALIDITY_PROM_V1"
 MEASUREMENT_PROPERTY_STRUCTURAL_VALIDITY = "structural_validity"
 
-_THRESHOLDS: dict[StatisticType, tuple[str, Callable[[float], bool]]] = {
-    StatisticType.CFI: (">= 0.95", lambda value: value >= 0.95),
-    StatisticType.TLI: (">= 0.95", lambda value: value >= 0.95),
-    StatisticType.RMSEA: ("<= 0.06", lambda value: value <= 0.06),
-    StatisticType.SRMR: ("<= 0.08", lambda value: value <= 0.08),
+_THRESHOLDS: dict[
+    StatisticType,
+    tuple[str, Callable[[float | tuple[float, float] | str | None], bool]],
+] = {
+    StatisticType.CFI: (
+        ">= 0.95",
+        lambda value: isinstance(value, Real) and float(value) >= 0.95,
+    ),
+    StatisticType.TLI: (
+        ">= 0.95",
+        lambda value: isinstance(value, Real) and float(value) >= 0.95,
+    ),
+    StatisticType.RMSEA: (
+        "<= 0.06",
+        lambda value: isinstance(value, Real) and float(value) <= 0.06,
+    ),
+    StatisticType.SRMR: (
+        "<= 0.08",
+        lambda value: isinstance(value, Real) and float(value) <= 0.08,
+    ),
+    StatisticType.INTERNAL_STRUCTURE_FINDING: (
+        "internal_structure_finding == reported",
+        lambda value: isinstance(value, str) and value.strip().lower() == "reported",
+    ),
 }
 
 
@@ -92,16 +112,18 @@ def _build_comparisons(
         expression, comparator = _THRESHOLDS[candidate.statistic_type]
         value = candidate.value_normalized
 
-        if isinstance(value, float):
-            outcome = (
-                ThresholdComparisonOutcome.MEETS
-                if comparator(value)
-                else ThresholdComparisonOutcome.FAILS
-            )
+        if comparator(value):
+            outcome = ThresholdComparisonOutcome.MEETS
             note: str | None = None
+        elif value is None:
+            outcome = ThresholdComparisonOutcome.NOT_EVALUABLE
+            note = "normalized statistic value was missing"
+        elif isinstance(value, (float, int, str)):
+            outcome = ThresholdComparisonOutcome.FAILS
+            note = None
         else:
             outcome = ThresholdComparisonOutcome.NOT_EVALUABLE
-            note = "normalized statistic value is not numeric"
+            note = "normalized statistic value was not comparable to threshold"
 
         comparisons.append(
             ThresholdComparison(
@@ -122,7 +144,10 @@ def _compute_rating(
     if not comparisons:
         return (
             MeasurementPropertyRating.INDETERMINATE,
-            "No structural-validity statistics (CFI/TLI/RMSEA/SRMR) were available.",
+            (
+                "No structural-validity statistics were available (CFI/TLI/RMSEA/SRMR or "
+                "direct internal-structure findings)."
+            ),
             UncertaintyStatus.MISSING_EVIDENCE,
             ReviewerDecisionStatus.PENDING,
         )
