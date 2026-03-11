@@ -1474,6 +1474,10 @@ def _instrument_name_variants(normalized_name: str) -> set[str]:
     without_decimal_version = re.sub(r"\d+\.\d+$", "", cleaned)
     if without_decimal_version:
         variants.add(without_decimal_version)
+    if "-" in cleaned:
+        base, suffix = cleaned.rsplit("-", 1)
+        if len(base) >= 3 and suffix.isalpha() and len(suffix) <= 2:
+            variants.add(base)
     return {variant for variant in variants if variant}
 
 

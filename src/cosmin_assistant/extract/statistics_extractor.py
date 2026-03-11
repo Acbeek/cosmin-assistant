@@ -40,7 +40,8 @@ _SINGLE_VALUE_PATTERNS: tuple[tuple[StatisticType, re.Pattern[str]], ...] = (
     (
         StatisticType.ICC,
         re.compile(
-            rf"\bICC(?:\s*[\]\)\}}])?(?:\s*\([^)]+\))?\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            rf"\bICC(?:\s*[\]\)\}}])?(?:\s*\([^)]+\))?\s*(?:=|:|was|of)?\s*"
+            rf"(?:about|around|approximately)?\s*({_DECIMAL})",
             re.IGNORECASE,
         ),
     ),
@@ -48,7 +49,8 @@ _SINGLE_VALUE_PATTERNS: tuple[tuple[StatisticType, re.Pattern[str]], ...] = (
         StatisticType.ICC,
         re.compile(
             rf"\b(?:intra|inter)class\s+correlation\s+coefficient(?:s)?"
-            rf"(?:\s*\[[^\]]+\])?\s*(?:=|:|was|of)?\s*({_DECIMAL})",
+            rf"(?:\s*\[[^\]]+\])?\s*(?:=|:|was|of)?\s*"
+            rf"(?:about|around|approximately)?\s*({_DECIMAL})",
             re.IGNORECASE,
         ),
     ),
@@ -187,6 +189,19 @@ _COMPARATOR_CONTEXT_RE = re.compile(
     r"(?:between|with)|association (?:between|with)|with the)\b",
     re.IGNORECASE,
 )
+_COMPARATOR_DECLARATION_RE = re.compile(
+    r"\b(?:comparator(?:\s+only)?\s+instrument(?:s)?|comparator\s+measure(?:s)?|"
+    r"comparator\s+outcome(?:s)?|"
+    r"(?:used|administered)[^.]{0,80}\b(?:to\s+measure|for)\s+construct\s+validity)\b",
+    re.IGNORECASE,
+)
+_COMPARATOR_RESULT_SIGNAL_RE = re.compile(
+    r"\b(?:significant|regression|predict(?:ive|ed|s)?|"
+    r"discriminat(?:e|ed|ion)|differ(?:ence|ent|ed)|higher|lower|p\s*[<=>]|"
+    r"r(?:_s)?\s*=|rho\s*=|auc\s*=|known[- ]groups?|"
+    r"(?:strong|moderate|weak|high|low)\s+(?:correlation|association)s?)\b",
+    re.IGNORECASE,
+)
 _INTERNAL_STRUCTURE_SIGNAL_RE = re.compile(
     r"\b(?:rasch|irt|item\s+fit|infit|outfit|local\s+dependence|"
     r"local\s+independence|unidimensional(?:ity)?|dimensionality|"
@@ -208,6 +223,19 @@ _GENERIC_INSTRUMENT_CONTEXT_RE = re.compile(
 )
 _RATER_RELIABILITY_SPAN_RE = re.compile(
     r"\b(?:inter-?rater|intra-?rater|test-?retest(?:/intra-?rater)?)\s+reliability\b[^;\n]{0,160}",
+    re.IGNORECASE,
+)
+_ICC_TERM_RE = re.compile(
+    r"\b(?:ICC|(?:intra|inter)class\s+correlation\s+coefficient(?:s)?)\b",
+    re.IGNORECASE,
+)
+_RELIABILITY_CONTEXT_RE = re.compile(
+    r"\b(?:reliability|inter-?rater|intra-?rater|test-?retest)\b",
+    re.IGNORECASE,
+)
+_RELIABILITY_NEGATION_RE = re.compile(
+    r"\b(?:no|not)\b[^.]{0,80}\b(?:icc|intra(?:class)?\s+correlation|kappa|reliability)\b"
+    r"[^.]{0,120}\b(?:reported|available|present|found)\b",
     re.IGNORECASE,
 )
 _GENERIC_INSTRUMENT_STOPWORDS = {
@@ -291,6 +319,15 @@ def extract_statistics_from_parsed_document(
             file_path=parsed.file_path,
             sentence=sentence,
             subgroup_label=subgroup_label,
+            candidates=candidates,
+            seen=seen,
+            instrument_hints=instrument_hints,
+            comparator_hints=comparator_hints,
+            sentence_method_labels=sentence_method_labels,
+        )
+        _extract_reliability_support_mentions(
+            file_path=parsed.file_path,
+            sentence=sentence,
             candidates=candidates,
             seen=seen,
             instrument_hints=instrument_hints,
@@ -596,6 +633,44 @@ def _extract_rater_reliability_coefficients(
             )
 
 
+def _extract_reliability_support_mentions(
+    *,
+    file_path: str,
+    sentence: SentenceRecord,
+    candidates: list[StatisticCandidate],
+    seen: set[tuple[object, ...]],
+    instrument_hints: tuple[str, ...],
+    comparator_hints: tuple[str, ...],
+    sentence_method_labels: tuple[EvidenceMethodLabel, ...],
+) -> None:
+    text = sentence.provenance.raw_text
+    if not instrument_hints:
+        return
+    if not _ICC_TERM_RE.search(text):
+        return
+    if not _RELIABILITY_CONTEXT_RE.search(text):
+        return
+    if _RELIABILITY_NEGATION_RE.search(text):
+        return
+    if _has_sentence_candidate(candidates, sentence.id, StatisticType.ICC):
+        return
+
+    _append_candidate(
+        file_path=file_path,
+        sentence=sentence,
+        statistic_type=StatisticType.ICC,
+        value_raw="icc_term",
+        value_normalized="mentioned",
+        subgroup_label=None,
+        surrounding_text=text,
+        instrument_hints=instrument_hints,
+        comparator_hints=comparator_hints,
+        method_labels=sentence_method_labels,
+        candidates=candidates,
+        seen=seen,
+    )
+
+
 def _extract_table_rows(text: str) -> tuple[tuple[str, ...], ...]:
     rows: list[tuple[str, ...]] = []
     for row_match in re.finditer(r"<tr[^>]*>(.*?)</tr>", text, re.IGNORECASE | re.DOTALL):
@@ -785,6 +860,16 @@ def _extract_known_groups_or_comparator(
         "known-groups" not in text_lower
         and "known groups" not in text_lower
         and "comparator" not in text_lower
+    ):
+        return
+
+    has_known_groups_phrase = "known-groups" in text_lower or "known groups" in text_lower
+    # Guard against comparator-role declaration sentences that do not report
+    # a comparative result (to avoid spurious direct construct-validity routing).
+    if (
+        not has_known_groups_phrase
+        and _COMPARATOR_DECLARATION_RE.search(text)
+        and not _COMPARATOR_RESULT_SIGNAL_RE.search(text)
     ):
         return
 

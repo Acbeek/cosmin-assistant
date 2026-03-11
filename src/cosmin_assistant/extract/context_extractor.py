@@ -224,6 +224,32 @@ _COMPARATOR_CONTEXT_RE = re.compile(
     r"correlated with|association (?:between|with))\b",
     re.IGNORECASE,
 )
+_COMPARATOR_DECLARATION_ONLY_RE = re.compile(
+    r"\b(?:comparator(?:\s+only)?\s+instrument(?:s)?|"
+    r"comparator\s+measure(?:s)?|"
+    r"(?:used|administered|assessed)[^.]{0,120}\b(?:for|to)\s+construct\s+validity|"
+    r"(?:used|assessed)[^.]{0,120}\bcorrelation(?:s)?\s+with)\b",
+    re.IGNORECASE,
+)
+_COMPARATOR_RESULT_SIGNAL_RE = re.compile(
+    r"\b(?:r(?:_s)?\s*=|rho\s*=|beta\s*=|icc\s*=|p\s*[<=>]|"
+    r"significant|higher|lower|different|regression|predict(?:ive|ed|s)?|"
+    r"discriminat(?:e|ed|ion)|"
+    r"(?:strong|moderate|weak|high|low)\s+(?:correlation|association)s?)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_APPRAISAL_OF_RE = re.compile(
+    r"\b(?:construct\s+validity|criterion\s+validity|psychometric\s+properties?|"
+    r"measurement\s+properties?|reliability|measurement\s+error|responsiveness|"
+    r"validation|evaluate|assessment)\s+of\b",
+    re.IGNORECASE,
+)
+_AIM_OBJECTIVE_PURPOSE_RE = re.compile(r"\b(?:aim|objective|purpose)\b", re.IGNORECASE)
+_TRANSLATION_ADAPTATION_RE = re.compile(
+    r"\b(?:translate|translated|translation|cross-?cultural(?:ly)?\s+adapt(?:ed|ation)?|"
+    r"adapt(?:ed|ation)?)\b",
+    re.IGNORECASE,
+)
 _GOLD_STANDARD_RE = re.compile(r"\bgold standard\b", re.IGNORECASE)
 _ENROLLMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
@@ -530,6 +556,7 @@ def _extract_preferred_instrument_name_fields(
     for mention in mentions:
         grouped[mention.normalized_name].append(mention)
 
+    sentence_by_id = {sentence.id: sentence for sentence in sentences}
     selected_fields: list[ContextFieldExtraction] = []
     for normalized_name, records in sorted(grouped.items(), key=lambda item: item[0]):
         evidence_span_ids = tuple(dict.fromkeys(record.evidence_span_id for record in records))
@@ -537,7 +564,15 @@ def _extract_preferred_instrument_name_fields(
         strongest = max(record.strength for record in records)
 
         # Keep only high-confidence instrument entities as standalone contexts.
-        if mention_count < 2 and strongest < 5:
+        if (
+            mention_count < 2
+            and strongest < 5
+            and not _has_target_priority_single_mention_context(
+                normalized_name=normalized_name,
+                records=records,
+                sentence_by_id=sentence_by_id,
+            )
+        ):
             continue
 
         raw_text = " || ".join(dict.fromkeys(record.raw_text for record in records))
@@ -567,6 +602,25 @@ def _extract_preferred_instrument_name_fields(
     return tuple(selected_fields)
 
 
+def _has_target_priority_single_mention_context(
+    *,
+    normalized_name: str,
+    records: list[_InstrumentMentionDraft],
+    sentence_by_id: dict[StableId, SentenceRecord],
+) -> bool:
+    for record in records:
+        sentence = sentence_by_id.get(record.evidence_span_id)
+        if sentence is None:
+            continue
+        text = sentence.provenance.raw_text
+        text_lower = text.lower()
+        if _instrument_text_position(normalized_name, text_lower) < 0:
+            continue
+        if any(pattern.search(text) for pattern in _TARGET_PRIORITY_PATTERNS):
+            return True
+    return False
+
+
 def _collect_instrument_mentions(
     sentences: tuple[SentenceRecord, ...],
 ) -> tuple[_InstrumentMentionDraft, ...]:
@@ -577,7 +631,11 @@ def _collect_instrument_mentions(
             continue
 
         text = sentence.provenance.raw_text
-        context_bonus = 2 if _INSTRUMENT_CONTEXT_RE.search(text) else 0
+        has_instrument_context = _INSTRUMENT_CONTEXT_RE.search(text) is not None
+        has_target_priority_context = any(
+            pattern.search(text) for pattern in _TARGET_PRIORITY_PATTERNS
+        )
+        context_bonus = 2 if has_instrument_context else 0
         context_penalty = -3 if _NON_INSTRUMENT_CONTEXT_RE.search(text) else 0
 
         if _SIGAM_FULL_RE.search(text):
@@ -775,7 +833,7 @@ def _collect_instrument_mentions(
                 if current is None or draft.strength > current.strength:
                     by_key[key] = draft
 
-        if _INSTRUMENT_CONTEXT_RE.search(text):
+        if has_instrument_context or has_target_priority_context:
             for match in _INSTRUMENT_ACRONYM_RE.finditer(text):
                 token = match.group(1)
                 value = _normalize_instrument_name_candidate(token)
@@ -802,7 +860,7 @@ def _collect_instrument_mentions(
                     by_key[key] = draft
 
         # Keep explicit abbreviated mentions inside long-form clauses.
-        if _INSTRUMENT_CONTEXT_RE.search(text) and "(" in text and ")" in text:
+        if (has_instrument_context or has_target_priority_context) and "(" in text and ")" in text:
             for token in re.findall(r"\(([A-Za-z0-9\- .]{2,20})\)", text):
                 compact_token = token.strip()
                 if len(compact_token.split()) > 2:
@@ -2559,6 +2617,43 @@ def _first_candidate_normalized(field: ContextFieldExtraction) -> str | None:
     return None
 
 
+def _is_comparator_declaration_without_result_signal(text: str) -> bool:
+    text_lower = text.lower()
+    if "known-groups" in text_lower or "known groups" in text_lower:
+        return False
+    if not _COMPARATOR_DECLARATION_ONLY_RE.search(text):
+        return False
+    return not _COMPARATOR_RESULT_SIGNAL_RE.search(text)
+
+
+def _locked_explicit_target_ids(
+    *,
+    text: str,
+    ordered_mentions: tuple[tuple[int, StableId], ...],
+    comparator_anchor: int,
+    appraisal_re: re.Pattern[str],
+) -> tuple[StableId, ...]:
+    if not ordered_mentions:
+        return ()
+
+    locked_ids: list[StableId] = []
+    for match in _EXPLICIT_APPRAISAL_OF_RE.finditer(text):
+        for position, instrument_id in ordered_mentions:
+            if position >= match.end() and (comparator_anchor < 0 or position < comparator_anchor):
+                locked_ids.append(instrument_id)
+
+    if (
+        _AIM_OBJECTIVE_PURPOSE_RE.search(text)
+        and _TRANSLATION_ADAPTATION_RE.search(text)
+        and appraisal_re.search(text)
+    ):
+        for position, instrument_id in ordered_mentions:
+            if comparator_anchor < 0 or position < comparator_anchor:
+                locked_ids.append(instrument_id)
+
+    return tuple(dict.fromkeys(locked_ids))
+
+
 def _infer_instrument_roles(
     *,
     sentences: tuple[SentenceRecord, ...],
@@ -2644,6 +2739,61 @@ def _infer_instrument_roles(
         ]
         if not mentioned_ids:
             continue
+        ordered_mentions = tuple(
+            sorted(
+                (
+                    (_instrument_text_position(normalized_name, text_lower), instrument_id)
+                    for normalized_name, instrument_id in by_name.items()
+                    if _instrument_text_position(normalized_name, text_lower) >= 0
+                ),
+                key=lambda item: item[0],
+            )
+        )
+        comparator_match = _COMPARATOR_CONTEXT_RE.search(text) or comparator_relation_re.search(
+            text
+        )
+        comparator_anchor = comparator_match.start() if comparator_match else -1
+
+        locked_target_ids = _locked_explicit_target_ids(
+            text=text,
+            ordered_mentions=ordered_mentions,
+            comparator_anchor=comparator_anchor,
+            appraisal_re=appraisal_re,
+        )
+        if locked_target_ids:
+            for instrument_id in locked_target_ids:
+                target_scores[instrument_id] += 8
+                target_evidence[instrument_id].append(sentence.id)
+                if len(locked_target_ids) >= 2:
+                    joint_psychometric_scores[instrument_id] += 1
+
+            if comparator_match:
+                for position, instrument_id in ordered_mentions:
+                    if instrument_id in locked_target_ids:
+                        continue
+                    if position >= comparator_anchor:
+                        comparator_scores[instrument_id] += 3
+                        comparator_evidence[instrument_id].append(sentence.id)
+            continue
+
+        if _is_comparator_declaration_without_result_signal(text):
+            if comparator_match:
+                if len(ordered_mentions) >= 2 and ordered_mentions[0][0] < comparator_anchor:
+                    lead_instrument_id = ordered_mentions[0][1]
+                    target_scores[lead_instrument_id] += 2
+                    target_evidence[lead_instrument_id].append(sentence.id)
+                    for _, instrument_id in ordered_mentions[1:]:
+                        comparator_scores[instrument_id] += 3
+                        comparator_evidence[instrument_id].append(sentence.id)
+                else:
+                    for instrument_id in mentioned_ids:
+                        comparator_scores[instrument_id] += 3
+                        comparator_evidence[instrument_id].append(sentence.id)
+            else:
+                for instrument_id in mentioned_ids:
+                    comparator_scores[instrument_id] += 3
+                    comparator_evidence[instrument_id].append(sentence.id)
+            continue
 
         if "title" in " ".join(sentence.heading_path).lower():
             for instrument_id in mentioned_ids:
@@ -2658,19 +2808,7 @@ def _infer_instrument_roles(
                 break
 
         if study_intent_re.search(text) and appraisal_re.search(text):
-            comparator_match = _COMPARATOR_CONTEXT_RE.search(text) or comparator_relation_re.search(
-                text
-            )
             if comparator_match:
-                comparator_anchor = comparator_match.start()
-                ordered_mentions = sorted(
-                    (
-                        (_instrument_text_position(normalized_name, text_lower), instrument_id)
-                        for normalized_name, instrument_id in by_name.items()
-                        if _instrument_text_position(normalized_name, text_lower) >= 0
-                    ),
-                    key=lambda item: item[0],
-                )
                 for position, instrument_id in ordered_mentions:
                     if position < comparator_anchor:
                         target_scores[instrument_id] += 4
@@ -2708,25 +2846,16 @@ def _infer_instrument_roles(
                 outcome_scores[instrument_id] += 1
                 outcome_evidence[instrument_id].append(sentence.id)
 
-        comparator_match = _COMPARATOR_CONTEXT_RE.search(text) or comparator_relation_re.search(
-            text
-        )
         if comparator_match:
-            comparator_anchor = comparator_match.start()
-            ordered_mentions = sorted(
-                (
-                    (_instrument_text_position(normalized_name, text_lower), instrument_id)
-                    for normalized_name, instrument_id in by_name.items()
-                    if _instrument_text_position(normalized_name, text_lower) >= 0
-                ),
-                key=lambda item: item[0],
-            )
             if len(ordered_mentions) >= 2:
                 lead_id = ordered_mentions[0][1]
                 lead_position = ordered_mentions[0][0]
                 if lead_position < comparator_anchor:
                     target_scores[lead_id] += 2
                     target_evidence[lead_id].append(sentence.id)
+                else:
+                    comparator_scores[lead_id] += 3
+                    comparator_evidence[lead_id].append(sentence.id)
                 for _, instrument_id in ordered_mentions[1:]:
                     comparator_scores[instrument_id] += 3
                     comparator_evidence[instrument_id].append(sentence.id)
