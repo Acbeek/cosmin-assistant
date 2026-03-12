@@ -55,6 +55,45 @@ def test_no_op_review_preserves_artifacts_and_marks_finalized(tmp_path: Path) ->
     assert reviewed_review_state["overrides_applied_in_run"] == 0
 
 
+def test_no_op_review_surfaces_box2_content_validity_as_pending_manual_review(
+    tmp_path: Path,
+) -> None:
+    provisional_dir = _build_provisional_outputs(tmp_path)
+    finalized_dir = tmp_path / "finalized_box2_pending"
+
+    rob_payload = _load_json(provisional_dir / "rob_assessment.json")
+    assert isinstance(rob_payload, list)
+    box2_bundle = next(
+        bundle
+        for bundle in rob_payload
+        if bundle.get("box_assessment", {}).get("cosmin_box") == "box_2_content_validity"
+    )
+    box2_id = str(box2_bundle["box_assessment"]["id"])
+    box2_item_ids = {str(item["id"]) for item in box2_bundle.get("item_assessments", [])}
+    assert box2_item_ids
+
+    apply_review_request_bundle(
+        provisional_dir=provisional_dir,
+        request=ReviewRequestBundle(),
+        out_dir=finalized_dir,
+    )
+
+    reviewed_review_state = _load_json(finalized_dir / "review_state.json")
+    pending_items = reviewed_review_state["pending_review_items"]
+    assert isinstance(pending_items, list)
+
+    pending_by_object_id = {str(item["object_id"]): item for item in pending_items}
+    assert box2_id in pending_by_object_id
+    assert pending_by_object_id[box2_id]["object_type"] == "rob_box_assessment"
+
+    pending_item_ids = {
+        str(item["object_id"])
+        for item in pending_items
+        if item.get("object_type") == "rob_item_assessment"
+    }
+    assert box2_item_ids <= pending_item_ids
+
+
 def test_one_override_via_cli_updates_target_and_writes_audit_trail(tmp_path: Path) -> None:
     provisional_dir = _build_provisional_outputs(tmp_path)
     finalized_dir = tmp_path / "finalized_cli"

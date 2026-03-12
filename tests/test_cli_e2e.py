@@ -94,3 +94,45 @@ def test_cli_fails_when_reusing_output_dir_with_changed_source_hash(tmp_path: Pa
 
     assert second.exit_code != 0
     assert "stale artifacts" in second.output.lower()
+
+
+def test_cli_exposes_box2_content_validity_as_manual_reviewer_required_path(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "results_box2"
+    runner = CliRunner()
+
+    invocation = runner.invoke(
+        app,
+        [str(_FIXTURE_PATH), "--profile", "prom", "--out", str(out_dir)],
+    )
+    assert invocation.exit_code == 0, invocation.output
+
+    rob_payload = json.loads((out_dir / "rob_assessment.json").read_text(encoding="utf-8"))
+    assert isinstance(rob_payload, list)
+    box2_bundles = [
+        bundle
+        for bundle in rob_payload
+        if bundle.get("box_assessment", {}).get("cosmin_box") == "box_2_content_validity"
+    ]
+    assert box2_bundles
+
+    box2 = box2_bundles[0]
+    box_assessment = box2["box_assessment"]
+    assert box_assessment["measurement_property"] == "content_validity"
+    assert box_assessment["uncertainty_status"] == "reviewer_required"
+    assert box_assessment["reviewer_decision_status"] == "pending"
+
+    item_assessments = box2["item_assessments"]
+    assert item_assessments
+    assert all(item["item_rating"] == "doubtful" for item in item_assessments)
+    assert all(item["uncertainty_status"] == "reviewer_required" for item in item_assessments)
+    assert all(item["reviewer_decision_status"] == "pending" for item in item_assessments)
+
+    measurement_payload = json.loads(
+        (out_dir / "measurement_property_results.json").read_text(encoding="utf-8")
+    )
+    assert isinstance(measurement_payload, list)
+    assert not any(
+        item["measurement_property"] == "content_validity" for item in measurement_payload
+    )

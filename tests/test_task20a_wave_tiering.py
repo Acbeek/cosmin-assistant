@@ -35,14 +35,20 @@ def _load_expected_payload(entry: dict[str, Any]) -> dict[str, Any]:
 def test_task20a_wave_tier_reclassification_is_locked() -> None:
     manifest = _load_manifest_index()
 
-    assert manifest["sci_hafner2017"]["protected_or_exploratory"] == "protected"
-    assert manifest["sci_hafner2017"]["manual_validation_status"] == "reviewed_for_light_assertions"
-
-    assert manifest["sci_cox2017"]["protected_or_exploratory"] == "exploratory"
-    assert manifest["sci_cox2017"]["manual_validation_status"] == "pending_review"
-
-    assert manifest["sci_cotemartin2020"]["protected_or_exploratory"] == "exploratory"
-    assert manifest["sci_cotemartin2020"]["manual_validation_status"] == "pending_review"
+    protected_papers = (
+        "azadinia_2025",
+        "potter_2025",
+        "awad_2025",
+        "nonsci_franchignoni2023",
+        "sci_gailey2002",
+        "sci_carse2021",
+        "sci_hafner2017",
+        "sci_cox2017",
+        "sci_cotemartin2020",
+    )
+    for paper_id in protected_papers:
+        assert manifest[paper_id]["protected_or_exploratory"] == "protected"
+        assert manifest[paper_id]["manual_validation_status"] == "reviewed_for_light_assertions"
 
     assert manifest["nonsci_hafner2022"]["protected_or_exploratory"] == "exploratory"
     assert manifest["nonsci_hafner2022"]["manual_validation_status"] == "pending_review"
@@ -74,7 +80,7 @@ def test_task20a_protected_scientific_assertions_for_sci_hafner2017() -> None:
 
 def test_task20a_exploratory_fixtures_have_lightweight_identity_checks_only() -> None:
     manifest = _load_manifest_index()
-    exploratory_papers = ("sci_cox2017", "sci_cotemartin2020", "nonsci_hafner2022")
+    exploratory_papers = ("nonsci_hafner2022",)
 
     for paper_id in exploratory_papers:
         payload = _load_expected_payload(manifest[paper_id])

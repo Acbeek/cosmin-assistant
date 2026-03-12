@@ -18,6 +18,7 @@ from cosmin_assistant.cli.property_activation import (
     stable_activation_id,
 )
 from cosmin_assistant.cosmin_rob import (
+    BOX_2_ITEM_CODES,
     BOX_3_ITEM_CODES,
     BOX_4_ITEM_CODES,
     BOX_5_ITEM_CODES,
@@ -28,6 +29,7 @@ from cosmin_assistant.cosmin_rob import (
     BOX_10_ITEM_CODES,
     BoxAssessmentBundle,
     BoxItemInput,
+    assess_box2_content_validity,
     assess_box3_structural_validity,
     assess_box4_internal_consistency,
     assess_box5_cross_cultural_validity_measurement_invariance,
@@ -195,6 +197,16 @@ def run_provisional_assessment(
         instrument_id = instrument_context.instrument_id
         instrument_name = _first_string_value(instrument_context.instrument_name) or "unknown"
         normalized_instrument_name = _normalize_instrument_name(instrument_name)
+
+        # Content validity remains explicitly reviewer-in-the-loop in the
+        # provisional PROM pipeline: expose Box 2 as manual-input-required only.
+        rob_assessments.append(
+            assess_box2_content_validity(
+                study_id=study_id,
+                instrument_id=instrument_id,
+                item_inputs=_box2_manual_inputs(fallback_evidence_id=fallback_evidence_id),
+            )
+        )
 
         instrument_candidates = _select_rating_candidates(
             statistics.candidates,
@@ -1598,6 +1610,19 @@ def _box3_inputs(
         ),
     }
     return tuple(item_map[item_code] for item_code in BOX_3_ITEM_CODES)
+
+
+def _box2_manual_inputs(*, fallback_evidence_id: str) -> tuple[BoxItemInput, ...]:
+    return tuple(
+        BoxItemInput(
+            item_code=item_code,
+            item_rating=CosminItemRating.DOUBTFUL,
+            evidence_span_ids=[fallback_evidence_id],
+            uncertainty_status=UncertaintyStatus.REVIEWER_REQUIRED,
+            reviewer_decision_status=ReviewerDecisionStatus.PENDING,
+        )
+        for item_code in BOX_2_ITEM_CODES
+    )
 
 
 def _box4_inputs(
