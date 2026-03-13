@@ -11,6 +11,12 @@ from typer.testing import CliRunner
 from cosmin_assistant.cli.app import app
 
 _FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "markdown" / "e2e_prom_article.md"
+_BOX1_ELIGIBLE_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "markdown" / "nonsci_hafner2022.md"
+)
+_NON_DEVELOPMENT_PROM_FIXTURE_PATH = (
+    Path(__file__).resolve().parent / "fixtures" / "markdown" / "sci_hafner2017.md"
+)
 
 
 def test_cli_runs_end_to_end_and_exports_required_artifacts(tmp_path: Path) -> None:
@@ -135,4 +141,59 @@ def test_cli_exposes_box2_content_validity_as_manual_reviewer_required_path(
     assert isinstance(measurement_payload, list)
     assert not any(
         item["measurement_property"] == "content_validity" for item in measurement_payload
+    )
+
+
+def test_cli_exposes_box1_prom_development_only_for_eligible_manual_path(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "results_box1_eligible"
+    runner = CliRunner()
+
+    invocation = runner.invoke(
+        app,
+        [str(_BOX1_ELIGIBLE_FIXTURE_PATH), "--profile", "prom", "--out", str(out_dir)],
+    )
+    assert invocation.exit_code == 0, invocation.output
+
+    rob_payload = json.loads((out_dir / "rob_assessment.json").read_text(encoding="utf-8"))
+    assert isinstance(rob_payload, list)
+
+    box1_bundles = [
+        bundle
+        for bundle in rob_payload
+        if bundle.get("box_assessment", {}).get("cosmin_box") == "box_1_prom_development"
+    ]
+    assert box1_bundles
+
+    box1 = box1_bundles[0]
+    box_assessment = box1["box_assessment"]
+    assert box_assessment["measurement_property"] == "prom_development"
+    assert box_assessment["uncertainty_status"] == "reviewer_required"
+    assert box_assessment["reviewer_decision_status"] == "pending"
+
+    item_assessments = box1["item_assessments"]
+    assert item_assessments
+    assert all(item["item_rating"] == "doubtful" for item in item_assessments)
+    assert all(item["uncertainty_status"] == "reviewer_required" for item in item_assessments)
+    assert all(item["reviewer_decision_status"] == "pending" for item in item_assessments)
+
+
+def test_cli_does_not_emit_box1_placeholder_for_non_development_prom_paper(
+    tmp_path: Path,
+) -> None:
+    out_dir = tmp_path / "results_box1_non_development"
+    runner = CliRunner()
+
+    invocation = runner.invoke(
+        app,
+        [str(_NON_DEVELOPMENT_PROM_FIXTURE_PATH), "--profile", "prom", "--out", str(out_dir)],
+    )
+    assert invocation.exit_code == 0, invocation.output
+
+    rob_payload = json.loads((out_dir / "rob_assessment.json").read_text(encoding="utf-8"))
+    assert isinstance(rob_payload, list)
+    assert not any(
+        bundle.get("box_assessment", {}).get("cosmin_box") == "box_1_prom_development"
+        for bundle in rob_payload
     )

@@ -93,7 +93,7 @@ def test_template5_rows_separate_versions_and_mark_additional_studies() -> None:
     assert len(payload["rows"]) == 3
 
 
-def test_template7_preserves_study_rows_and_summary_rows_with_na_support() -> None:
+def test_template7_preserves_study_rows_and_suppresses_blank_summary_rows() -> None:
     fixture = _build_fixture_data()
 
     table = build_template7_evidence_table(
@@ -129,10 +129,7 @@ def test_template7_preserves_study_rows_and_summary_rows_with_na_support() -> No
         for row in table.rows
         if row.instrument_version == "v1" and row.measurement_property == "structural_validity"
     ]
-    assert len(v1_structural) == 1
-    assert v1_structural[0].row_kind.value == "summary"
-    assert v1_structural[0].overall_rating is None
-    assert v1_structural[0].certainty_of_evidence is None
+    assert not v1_structural
 
     legend_keys = {legend.key for legend in table.legends}
     assert {"study", "summary", "+", "-", "?", "±", "blank_or_na"} <= legend_keys

@@ -15,15 +15,22 @@ from cosmin_assistant.review import ReviewRequestBundle, apply_review_request_bu
 from cosmin_assistant.tables import export_run_outputs
 
 _FIXTURE_ARTICLE = Path(__file__).resolve().parent / "fixtures" / "markdown" / "e2e_prom_article.md"
+_BOX1_ELIGIBLE_ARTICLE = (
+    Path(__file__).resolve().parent / "fixtures" / "markdown" / "nonsci_hafner2022.md"
+)
 
 
 def _load_json(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _build_provisional_outputs(tmp_path: Path) -> Path:
+def _build_provisional_outputs(
+    tmp_path: Path,
+    *,
+    article_path: Path = _FIXTURE_ARTICLE,
+) -> Path:
     out_dir = tmp_path / "provisional"
-    run = run_provisional_assessment(article_path=_FIXTURE_ARTICLE, profile_type=ProfileType.PROM)
+    run = run_provisional_assessment(article_path=article_path, profile_type=ProfileType.PROM)
     export_run_outputs(run=run, out_dir=out_dir)
     return out_dir
 
@@ -92,6 +99,45 @@ def test_no_op_review_surfaces_box2_content_validity_as_pending_manual_review(
         if item.get("object_type") == "rob_item_assessment"
     }
     assert box2_item_ids <= pending_item_ids
+
+
+def test_no_op_review_surfaces_box1_prom_development_as_pending_manual_review(
+    tmp_path: Path,
+) -> None:
+    provisional_dir = _build_provisional_outputs(tmp_path, article_path=_BOX1_ELIGIBLE_ARTICLE)
+    finalized_dir = tmp_path / "finalized_box1_pending"
+
+    rob_payload = _load_json(provisional_dir / "rob_assessment.json")
+    assert isinstance(rob_payload, list)
+    box1_bundle = next(
+        bundle
+        for bundle in rob_payload
+        if bundle.get("box_assessment", {}).get("cosmin_box") == "box_1_prom_development"
+    )
+    box1_id = str(box1_bundle["box_assessment"]["id"])
+    box1_item_ids = {str(item["id"]) for item in box1_bundle.get("item_assessments", [])}
+    assert box1_item_ids
+
+    apply_review_request_bundle(
+        provisional_dir=provisional_dir,
+        request=ReviewRequestBundle(),
+        out_dir=finalized_dir,
+    )
+
+    reviewed_review_state = _load_json(finalized_dir / "review_state.json")
+    pending_items = reviewed_review_state["pending_review_items"]
+    assert isinstance(pending_items, list)
+
+    pending_by_object_id = {str(item["object_id"]): item for item in pending_items}
+    assert box1_id in pending_by_object_id
+    assert pending_by_object_id[box1_id]["object_type"] == "rob_box_assessment"
+
+    pending_item_ids = {
+        str(item["object_id"])
+        for item in pending_items
+        if item.get("object_type") == "rob_item_assessment"
+    }
+    assert box1_item_ids <= pending_item_ids
 
 
 def test_one_override_via_cli_updates_target_and_writes_audit_trail(tmp_path: Path) -> None:

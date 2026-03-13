@@ -137,6 +137,19 @@ Apply reviewer overrides/adjudication and finalize:
 cosmin-review results/run1 --review-file review_request.yaml --out results/run1_final --finalize
 ```
 
+Export Template 7/8 tables from reviewed artifacts:
+
+```bash
+find results -type f -name review_state.json
+cosmin-tables --input-dir results/run1_final --out-dir results/run1_final/tables --template all
+```
+
+Export from provisional reviewed artifacts only when explicitly allowed:
+
+```bash
+cosmin-tables --input-dir results/run1_reviewed --out-dir results/run1_reviewed/tables --template all --allow-provisional
+```
+
 Minimal `review_request.yaml` shape:
 
 ```yaml
@@ -182,9 +195,19 @@ Batch run outputs (`cosmin-assess-batch`):
 
 Reviewed/finalized run outputs include the same files with updated review metadata and histories.
 
-Table-builder outputs are currently API-driven (intermediate objects + CSV/JSON conversion), not yet fully wired into polished DOCX templates.
+Table exports (`cosmin-tables`) from reviewed/finalized artifacts:
 
-Template DOCX exports are now available via API entry points (`export_template5_docx`, `export_template7_docx`, `export_template8_docx`).
+- default destination: `<input-dir>/tables/` (or `--out-dir`)
+- `template_7.json`
+- `template_7.csv`
+- `template_7.docx`
+- `template_8.json`
+- `template_8.csv`
+- `template_8.docx`
+- selective export supported via `--template 7`, `--template 8`, or `--template all`
+- finalized review state required by default; use `--allow-provisional` to opt in to provisional export
+
+Template 5/7/8 exporters also remain available through Python APIs.
 
 ## Installation
 
@@ -196,6 +219,20 @@ python -m pip install -e ".[dev]"
 ```
 
 If `python3.11` is unavailable on your machine, use any installed Python `>=3.11` binary.
+
+Re-enter your environment later:
+
+- Open a new shell, then `cd` to this repository.
+- Activate the same environment you used for installation.
+- For `venv`-style environments, run one of:
+
+```bash
+source venv313/bin/activate
+# or, if your environment folder is named differently:
+source .venv/bin/activate
+```
+
+- Leave the environment with `deactivate`.
 
 macOS/iCloud note:
 
@@ -241,5 +278,18 @@ pytest -q
 - `src/cosmin_assistant/tables/`
 - `src/cosmin_assistant/cli/`
 - `src/cosmin_assistant/utils/`
+
+## Manual workflow first
+
+`cosmin-assistant` is usable without AI coding assistance.
+
+You can add and validate papers manually by:
+
+- drafting metadata first
+- running the single-paper pipeline
+- reviewing emitted artifacts
+- promoting papers to protected only after manual scientific validation
+
+Codex/LLM assistance is optional and should be used only as a workflow accelerator, not as a replacement for reviewer judgment.
 
 See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for practical workflow guidance.

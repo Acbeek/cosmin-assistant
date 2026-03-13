@@ -18,6 +18,14 @@ from cosmin_assistant.tables.intermediate_models import (
     Template8SummaryTable,
 )
 from cosmin_assistant.tables.output_builders import export_run_outputs
+from cosmin_assistant.tables.reviewed_artifact_loader import (
+    ReviewedTableExportInputs,
+    load_reviewed_table_export_inputs,
+)
+from cosmin_assistant.tables.reviewed_table_export import (
+    TableTemplateSelection,
+    export_reviewed_tables,
+)
 from cosmin_assistant.tables.table_builders import (
     build_template5_characteristics_table,
     build_template7_evidence_table,
@@ -32,7 +40,9 @@ __all__ = [
     "DocxExporter",
     "CosminTableDocxExporter",
     "ProvisionalDocxExporter",
+    "ReviewedTableExportInputs",
     "TableLegendEntry",
+    "TableTemplateSelection",
     "Template5CharacteristicsRow",
     "Template5CharacteristicsTable",
     "Template7EvidenceRow",
@@ -46,7 +56,9 @@ __all__ = [
     "export_template5_docx",
     "export_template7_docx",
     "export_template8_docx",
+    "export_reviewed_tables",
     "export_run_outputs",
+    "load_reviewed_table_export_inputs",
     "table_to_json_ready",
     "template5_to_dataframe",
     "template7_to_dataframe",

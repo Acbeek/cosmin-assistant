@@ -7,6 +7,7 @@ any direct dependency on Word/DOCX rendering.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import defaultdict
 from typing import Any, TypeVar
 
@@ -16,13 +17,14 @@ from cosmin_assistant.cosmin_rob import BoxAssessmentBundle
 from cosmin_assistant.extract import (
     ContextFieldExtraction,
     ContextValueCandidate,
+    FieldDetectionStatus,
     InstrumentContextExtractionResult,
     SampleSizeRole,
     StudyContextExtractionResult,
 )
 from cosmin_assistant.grade import ModifiedGradeResult
 from cosmin_assistant.measurement_rating import MeasurementPropertyRatingResult, RawResultRecord
-from cosmin_assistant.models import ModelBase
+from cosmin_assistant.models import ModelBase, PropertyActivationStatus
 from cosmin_assistant.synthesize import SynthesisAggregateResult
 from cosmin_assistant.tables.intermediate_models import (
     TableLegendEntry,
@@ -42,6 +44,12 @@ _TableModelT = TypeVar(
     Template7EvidenceTable,
     Template8SummaryTable,
 )
+_TEMPLATE7_SUBSCALE_FRAGMENT_PATTERN = re.compile(
+    r"\b(score|scores|scoring|range|ranges|correlation|correlations|"
+    r"spearman|pearson|using|analysis|analyzed)\b",
+    flags=re.IGNORECASE,
+)
+_TEMPLATE7_SUBSCALE_ALLOWED_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 /&+().-]*$")
 
 
 def build_template5_characteristics_table(
@@ -111,18 +119,20 @@ def build_template7_evidence_table(
 ) -> Template7EvidenceTable:
     """Build template 7 equivalent rows with study and summary levels."""
 
-    instrument_key_by_id = _instrument_key_by_id(instrument_contexts)
+    instrument_key_by_id = _template7_instrument_key_by_id(instrument_contexts)
     grouped_results: dict[tuple[InstrumentKey, str], list[MeasurementPropertyRatingResult]] = (
         defaultdict(list)
     )
-    instrument_keys: set[InstrumentKey] = set(_instrument_keys_from_contexts(instrument_contexts))
+    instrument_keys: set[InstrumentKey] = set(
+        _template7_instrument_keys_from_contexts(instrument_contexts)
+    )
 
     for result in measurement_results:
         instrument_key = _instrument_key_from_result(result, instrument_key_by_id)
         grouped_results[(instrument_key, result.measurement_property)].append(result)
         instrument_keys.add(instrument_key)
 
-    synthesis_map = _synthesis_map(synthesis_results)
+    synthesis_map = _template7_synthesis_map(synthesis_results)
     for instrument_key, _property in synthesis_map:
         instrument_keys.add(instrument_key)
 
@@ -142,7 +152,21 @@ def build_template7_evidence_table(
                 grouped_results.get((instrument_key, measurement_property), []),
                 key=lambda item: (item.study_id, item.id),
             )
-            for index, result in enumerate(study_rows, start=1):
+            meaningful_study_rows = [
+                result for result in study_rows if _is_meaningful_template7_study_result(result)
+            ]
+
+            synthesis = synthesis_map.get((instrument_key, measurement_property))
+            grade = grade_map.get(synthesis.id) if synthesis is not None else None
+            has_meaningful_summary = _has_meaningful_template7_summary(
+                synthesis=synthesis,
+                grade=grade,
+            )
+
+            if not meaningful_study_rows and not has_meaningful_summary:
+                continue
+
+            for index, result in enumerate(meaningful_study_rows, start=1):
                 rows.append(
                     Template7EvidenceRow(
                         id=_stable_id(
@@ -171,37 +195,36 @@ def build_template7_evidence_table(
                     )
                 )
 
-            synthesis = synthesis_map.get((instrument_key, measurement_property))
-            grade = grade_map.get(synthesis.id) if synthesis is not None else None
-            rows.append(
-                Template7EvidenceRow(
-                    id=_stable_id(
-                        "t7row",
-                        "summary",
-                        instrument_key[0],
-                        instrument_key[1] or "",
-                        instrument_key[2] or "",
-                        measurement_property,
-                    ),
-                    row_kind=Template7RowKind.SUMMARY,
-                    instrument_name=instrument_key[0],
-                    instrument_version=instrument_key[1],
-                    subscale=instrument_key[2],
-                    measurement_property=measurement_property,
-                    summarized_result=(
-                        synthesis.summary_explanation if synthesis is not None else None
-                    ),
-                    overall_rating=(
-                        synthesis.summary_rating.value if synthesis is not None else None
-                    ),
-                    certainty_of_evidence=(
-                        grade.final_certainty.value if grade is not None else None
-                    ),
-                    total_sample_size=(
-                        synthesis.total_sample_size if synthesis is not None else None
-                    ),
+            if has_meaningful_summary:
+                rows.append(
+                    Template7EvidenceRow(
+                        id=_stable_id(
+                            "t7row",
+                            "summary",
+                            instrument_key[0],
+                            instrument_key[1] or "",
+                            instrument_key[2] or "",
+                            measurement_property,
+                        ),
+                        row_kind=Template7RowKind.SUMMARY,
+                        instrument_name=instrument_key[0],
+                        instrument_version=instrument_key[1],
+                        subscale=instrument_key[2],
+                        measurement_property=measurement_property,
+                        summarized_result=(
+                            synthesis.summary_explanation if synthesis is not None else None
+                        ),
+                        overall_rating=(
+                            synthesis.summary_rating.value if synthesis is not None else None
+                        ),
+                        certainty_of_evidence=(
+                            grade.final_certainty.value if grade is not None else None
+                        ),
+                        total_sample_size=(
+                            synthesis.total_sample_size if synthesis is not None else None
+                        ),
+                    )
                 )
-            )
 
     return Template7EvidenceTable(
         id=_stable_id("table", "template_7", len(rows)),
@@ -313,6 +336,15 @@ def _instrument_keys_from_contexts(
     return tuple(seen.keys())
 
 
+def _template7_instrument_keys_from_contexts(
+    instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
+) -> tuple[InstrumentKey, ...]:
+    seen: dict[InstrumentKey, None] = {}
+    for context in instrument_contexts:
+        seen[_template7_instrument_key_from_context(context)] = None
+    return tuple(seen.keys())
+
+
 def _instrument_key_by_id(
     instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
 ) -> dict[str, InstrumentKey]:
@@ -322,12 +354,32 @@ def _instrument_key_by_id(
     return mapping
 
 
+def _template7_instrument_key_by_id(
+    instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
+) -> dict[str, InstrumentKey]:
+    mapping: dict[str, InstrumentKey] = {}
+    for context in sorted(instrument_contexts, key=lambda item: item.id):
+        mapping.setdefault(context.instrument_id, _template7_instrument_key_from_context(context))
+    return mapping
+
+
 def _instrument_key_from_context(context: InstrumentContextExtractionResult) -> InstrumentKey:
     instrument_name = _field_text(context.instrument_name) or f"instrument:{context.instrument_id}"
     return (
         instrument_name,
         _field_text(context.instrument_version),
         _field_text(context.subscale),
+    )
+
+
+def _template7_instrument_key_from_context(
+    context: InstrumentContextExtractionResult,
+) -> InstrumentKey:
+    instrument_name = _field_text(context.instrument_name) or f"instrument:{context.instrument_id}"
+    return (
+        instrument_name,
+        _field_text(context.instrument_version),
+        _template7_subscale_from_context(context.subscale),
     )
 
 
@@ -389,6 +441,23 @@ def _rob_map(
     return mapping
 
 
+def _template7_synthesis_map(
+    synthesis_results: tuple[SynthesisAggregateResult, ...],
+) -> dict[tuple[InstrumentKey, str], SynthesisAggregateResult]:
+    mapping: dict[tuple[InstrumentKey, str], SynthesisAggregateResult] = {}
+    for result in sorted(synthesis_results, key=lambda item: item.id):
+        key = (
+            (
+                result.instrument_name,
+                result.instrument_version,
+                _validated_template7_subscale_text(result.subscale),
+            ),
+            result.measurement_property,
+        )
+        mapping.setdefault(key, result)
+    return mapping
+
+
 def _synthesis_map(
     synthesis_results: tuple[SynthesisAggregateResult, ...],
 ) -> dict[tuple[InstrumentKey, str], SynthesisAggregateResult]:
@@ -436,6 +505,59 @@ def _raw_result_text(raw_results: tuple[RawResultRecord, ...]) -> str | None:
         subgroup = f"[{record.subgroup_label}]" if record.subgroup_label else ""
         parts.append(f"{stat}{subgroup}={record.value_raw}")
     return "; ".join(parts)
+
+
+def _is_meaningful_template7_study_result(result: MeasurementPropertyRatingResult) -> bool:
+    if result.activation_status is not PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE:
+        return False
+    return bool(
+        result.raw_results
+        or result.threshold_comparisons
+        or result.prerequisite_decisions
+        or result.evidence_span_ids
+    )
+
+
+def _has_meaningful_template7_summary(
+    *,
+    synthesis: SynthesisAggregateResult | None,
+    grade: ModifiedGradeResult | None,
+) -> bool:
+    if synthesis is None:
+        return False
+    return any(
+        (
+            bool(synthesis.summary_explanation),
+            synthesis.summary_rating is not None,
+            grade is not None and grade.final_certainty is not None,
+            synthesis.total_sample_size is not None,
+        )
+    )
+
+
+def _template7_subscale_from_context(field: ContextFieldExtraction) -> str | None:
+    if field.status is not FieldDetectionStatus.DETECTED:
+        return None
+    if len(field.candidates) != 1:
+        return None
+    return _validated_template7_subscale_text(_candidate_value_text(field.candidates[0]))
+
+
+def _validated_template7_subscale_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > 48:
+        return None
+    if any(token in normalized for token in ("|", ",", ";", ":", "=")):
+        return None
+    if _TEMPLATE7_SUBSCALE_FRAGMENT_PATTERN.search(normalized):
+        return None
+    if _TEMPLATE7_SUBSCALE_ALLOWED_PATTERN.match(normalized) is None:
+        return None
+    return normalized
 
 
 def _field_text(field: ContextFieldExtraction) -> str | None:

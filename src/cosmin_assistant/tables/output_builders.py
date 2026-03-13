@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import pandas as pd
 
@@ -25,12 +27,17 @@ if TYPE_CHECKING:
     from cosmin_assistant.cli.pipeline import ProvisionalAssessmentRun
     from cosmin_assistant.measurement_rating.models import MeasurementPropertyRatingResult
 
+_CounterKeyT = TypeVar("_CounterKeyT", bound=tuple[str, ...])
 _SUMMARY_INCLUDED_STATUSES: tuple[PropertyActivationStatus, ...] = (
     PropertyActivationStatus.DIRECT_CURRENT_STUDY_EVIDENCE,
     PropertyActivationStatus.MEASUREMENT_ERROR_SUPPORT_ONLY,
     PropertyActivationStatus.INTERPRETABILITY_ONLY,
     PropertyActivationStatus.REVIEWER_REQUIRED,
 )
+_SUMMARY_ENTRY_LINE_PATTERN = re.compile(
+    r"^- `(?P<target>[^`]+)` / `(?P<measurement_property>[^`]+)`: `[^`]+` " r"\((?P<details>.*)\)$"
+)
+_SUMMARY_ACTIVATION_PATTERN = re.compile(r"activation_status=`(?P<activation_status>[^`]+)`")
 _ARTIFACT_BASENAMES: dict[str, str] = {
     "evidence_json": "evidence.json",
     "rob_assessment_json": "rob_assessment.json",
@@ -73,6 +80,20 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
         measurement_results_for_export=measurement_results_for_export,
     )
 
+    measurement_payload = [
+        result.model_dump(mode="json") for result in measurement_results_for_export
+    ]
+    synthesis_payload = [result.model_dump(mode="json") for result in run.synthesis_results]
+    summary_markdown = _build_summary_markdown(
+        run,
+        measurement_results=measurement_results_for_export,
+    )
+    _guard_run_level_scientific_consistency(
+        measurement_payload=measurement_payload,
+        synthesis_payload=synthesis_payload,
+        summary_markdown=summary_markdown,
+    )
+
     manifest_payload = {
         "python_version": python_version_string(),
         "package_version": __version__,
@@ -111,12 +132,12 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
     _write_json_with_legacy_alias(
         prefixed_path=prefixed_paths["measurement_property_results_json"],
         legacy_path=legacy_paths["measurement_property_results_json"],
-        payload=[result.model_dump(mode="json") for result in measurement_results_for_export],
+        payload=measurement_payload,
     )
     _write_json_with_legacy_alias(
         prefixed_path=prefixed_paths["synthesis_json"],
         legacy_path=legacy_paths["synthesis_json"],
-        payload=[result.model_dump(mode="json") for result in run.synthesis_results],
+        payload=synthesis_payload,
     )
     _write_json_with_legacy_alias(
         prefixed_path=prefixed_paths["grade_json"],
@@ -139,10 +160,6 @@ def export_run_outputs(*, run: ProvisionalAssessmentRun, out_dir: str | Path) ->
         payload=provisional_review_state(source_output_dir=str(out_path)).model_dump(mode="json"),
     )
 
-    summary_markdown = _build_summary_markdown(
-        run,
-        measurement_results=measurement_results_for_export,
-    )
     _write_text_with_legacy_alias(
         prefixed_path=prefixed_paths["summary_report_md"],
         legacy_path=legacy_paths["summary_report_md"],
@@ -890,6 +907,253 @@ def _guard_provenance_integrity(run: ProvisionalAssessmentRun) -> None:
             f"from the current parsed article run. Invalid references: {sample}"
         )
         raise ValueError(msg)
+
+
+def _guard_run_level_scientific_consistency(
+    *,
+    measurement_payload: Sequence[object],
+    synthesis_payload: Sequence[object],
+    summary_markdown: str,
+) -> None:
+    active_statuses = {status.value for status in _SUMMARY_INCLUDED_STATUSES}
+
+    measurement_counter: Counter[tuple[str, str, str]] = Counter()
+    measurement_by_id: dict[str, tuple[str, str, str]] = {}
+    for item in measurement_payload:
+        if not isinstance(item, dict):
+            continue
+        measurement_id = item.get("id")
+        instrument_id = item.get("instrument_id")
+        measurement_property = item.get("measurement_property")
+        activation_status = item.get("activation_status")
+        if not (
+            isinstance(measurement_id, str)
+            and isinstance(instrument_id, str)
+            and isinstance(measurement_property, str)
+            and isinstance(activation_status, str)
+        ):
+            continue
+        measurement_by_id[measurement_id] = (instrument_id, measurement_property, activation_status)
+        if activation_status in active_statuses and not _is_ignored_content_validity_placeholder(
+            measurement_property,
+            activation_status,
+        ):
+            measurement_counter[(instrument_id, measurement_property, activation_status)] += 1
+
+    synthesis_counter: Counter[tuple[str, str, str]] = Counter()
+    synthesis_property_counter: Counter[tuple[str, str]] = Counter()
+    measurement_property_counter: Counter[tuple[str, str]] = Counter()
+    for (_, measurement_property, activation_status), count in measurement_counter.items():
+        measurement_property_counter[(measurement_property, activation_status)] += count
+
+    for item in synthesis_payload:
+        if not isinstance(item, dict):
+            continue
+        instrument_name = item.get("instrument_name")
+        measurement_property = item.get("measurement_property")
+        activation_status = item.get("activation_status")
+        if not (
+            isinstance(instrument_name, str)
+            and isinstance(measurement_property, str)
+            and isinstance(activation_status, str)
+        ):
+            continue
+
+        if activation_status not in active_statuses:
+            continue
+
+        if _is_ignored_content_validity_placeholder(measurement_property, activation_status):
+            continue
+
+        synthesis_counter[(instrument_name, measurement_property, activation_status)] += 1
+        synthesis_property_counter[(measurement_property, activation_status)] += 1
+
+        study_entries = item.get("study_entries")
+        if not isinstance(study_entries, list):
+            msg = (
+                "Scientific consistency check failed: obvious run-level artifact incoherence "
+                "in synthesis.json (study_entries payload was not a list)."
+            )
+            raise ValueError(msg)
+
+        linked_instrument_ids: set[str] = set()
+        for entry in study_entries:
+            if not isinstance(entry, dict):
+                msg = (
+                    "Scientific consistency check failed: obvious run-level artifact incoherence "
+                    "in synthesis.json (study_entries contained a non-object record)."
+                )
+                raise ValueError(msg)
+
+            linked_result_id = entry.get("id")
+            if not isinstance(linked_result_id, str):
+                msg = (
+                    "Scientific consistency check failed: obvious run-level artifact incoherence "
+                    "in synthesis.json (study_entries missing measurement result id)."
+                )
+                raise ValueError(msg)
+
+            linked = measurement_by_id.get(linked_result_id)
+            if linked is None:
+                msg = (
+                    "Scientific consistency check failed: obvious run-level artifact incoherence "
+                    "between synthesis.json and measurement_property_results.json "
+                    "(missing linked measurement result id)."
+                )
+                raise ValueError(msg)
+
+            linked_instrument_id, linked_property, linked_status = linked
+            if (linked_property, linked_status) != (measurement_property, activation_status):
+                msg = (
+                    "Scientific consistency check failed: active-property mismatch between "
+                    "synthesis.json and measurement_property_results.json linked study entries."
+                )
+                raise ValueError(msg)
+            linked_instrument_ids.add(linked_instrument_id)
+
+        if len(linked_instrument_ids) > 1:
+            msg = (
+                "Scientific consistency check failed: target instrument mismatch detected in "
+                "synthesis.json linked study entries for a single synthesis target."
+            )
+            raise ValueError(msg)
+
+    if measurement_property_counter != synthesis_property_counter:
+        preview = _counter_mismatch_preview(
+            expected=measurement_property_counter,
+            observed=synthesis_property_counter,
+        )
+        msg = (
+            "Scientific consistency check failed: active-property mismatch between "
+            "measurement_property_results.json and synthesis.json "
+            f"({preview})."
+        )
+        raise ValueError(msg)
+
+    summary_measurement_counter, has_measurement_heading = _summary_section_key_counter(
+        summary_markdown=summary_markdown,
+        heading="Measurement Property Ratings",
+        active_statuses=active_statuses,
+    )
+    summary_synthesis_counter, has_synthesis_heading = _summary_section_key_counter(
+        summary_markdown=summary_markdown,
+        heading="Synthesis",
+        active_statuses=active_statuses,
+    )
+
+    if measurement_counter and not has_measurement_heading:
+        msg = (
+            "Scientific consistency check failed: obvious run-level artifact incoherence "
+            "because summary_report.md is missing the Measurement Property Ratings section."
+        )
+        raise ValueError(msg)
+    if synthesis_counter and not has_synthesis_heading:
+        msg = (
+            "Scientific consistency check failed: obvious run-level artifact incoherence "
+            "because summary_report.md is missing the Synthesis section."
+        )
+        raise ValueError(msg)
+
+    if summary_measurement_counter != measurement_counter:
+        preview = _counter_mismatch_preview(
+            expected=measurement_counter,
+            observed=summary_measurement_counter,
+        )
+        msg = (
+            "Scientific consistency check failed: target instrument mismatch or active-property "
+            "mismatch between summary_report.md and measurement_property_results.json "
+            f"({preview})."
+        )
+        raise ValueError(msg)
+
+    if summary_synthesis_counter != synthesis_counter:
+        preview = _counter_mismatch_preview(
+            expected=synthesis_counter,
+            observed=summary_synthesis_counter,
+        )
+        msg = (
+            "Scientific consistency check failed: target instrument mismatch or active-property "
+            "mismatch between summary_report.md and synthesis.json "
+            f"({preview})."
+        )
+        raise ValueError(msg)
+
+
+def _summary_section_key_counter(
+    *,
+    summary_markdown: str,
+    heading: str,
+    active_statuses: set[str],
+) -> tuple[Counter[tuple[str, str, str]], bool]:
+    lines = summary_markdown.splitlines()
+    section_header = f"## {heading}"
+    in_section = False
+    found_section = False
+    key_counter: Counter[tuple[str, str, str]] = Counter()
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith("## "):
+            if in_section:
+                break
+            if line == section_header:
+                found_section = True
+                in_section = True
+            continue
+
+        if not in_section:
+            continue
+
+        match = _SUMMARY_ENTRY_LINE_PATTERN.match(line)
+        if match is None:
+            continue
+
+        activation_match = _SUMMARY_ACTIVATION_PATTERN.search(match.group("details"))
+        if activation_match is None:
+            continue
+
+        activation_status = activation_match.group("activation_status")
+        if activation_status not in active_statuses:
+            continue
+
+        target = match.group("target")
+        measurement_property = match.group("measurement_property")
+        if _is_ignored_content_validity_placeholder(measurement_property, activation_status):
+            continue
+
+        key_counter[(target, measurement_property, activation_status)] += 1
+
+    return key_counter, found_section
+
+
+def _is_ignored_content_validity_placeholder(
+    measurement_property: str,
+    activation_status: str,
+) -> bool:
+    return (
+        measurement_property == "content_validity"
+        and activation_status == PropertyActivationStatus.REVIEWER_REQUIRED.value
+    )
+
+
+def _counter_mismatch_preview(
+    *,
+    expected: Counter[_CounterKeyT],
+    observed: Counter[_CounterKeyT],
+) -> str:
+    missing = [
+        (key, expected_count - observed.get(key, 0))
+        for key, expected_count in expected.items()
+        if observed.get(key, 0) < expected_count
+    ]
+    extras = [
+        (key, observed_count - expected.get(key, 0))
+        for key, observed_count in observed.items()
+        if expected.get(key, 0) < observed_count
+    ]
+    missing_preview = ", ".join(f"{key} x{count}" for key, count in missing[:3])
+    extras_preview = ", ".join(f"{key} x{count}" for key, count in extras[:3])
+    return f"missing=[{missing_preview}] extra=[{extras_preview}]"
 
 
 def _write_json(path: Path, payload: object) -> None:

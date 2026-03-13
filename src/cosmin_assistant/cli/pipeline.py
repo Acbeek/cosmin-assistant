@@ -18,6 +18,7 @@ from cosmin_assistant.cli.property_activation import (
     stable_activation_id,
 )
 from cosmin_assistant.cosmin_rob import (
+    BOX_1_ITEM_CODES,
     BOX_2_ITEM_CODES,
     BOX_3_ITEM_CODES,
     BOX_4_ITEM_CODES,
@@ -29,6 +30,7 @@ from cosmin_assistant.cosmin_rob import (
     BOX_10_ITEM_CODES,
     BoxAssessmentBundle,
     BoxItemInput,
+    assess_box1_prom_development,
     assess_box2_content_validity,
     assess_box3_structural_validity,
     assess_box4_internal_consistency,
@@ -133,6 +135,18 @@ _N_FOR_INSTRUMENT_LABEL_RE = re.compile(
 _INSTRUMENT_LABEL_WITH_N_RE = re.compile(
     r"([A-Za-z0-9][A-Za-z0-9\-\s]{1,120})\s*\$?\(\s*[nN]\s*=\s*(\d+)\s*\)\$?"
 )
+_BOX1_PROM_DEVELOPMENT_AIM_RE = re.compile(
+    r"\b(?:aim|objective|purpose)\b[^.]{0,260}\b"
+    r"(?:(?:develop|development)[^.]{0,120}\b(?:prom|patient-?reported|"
+    r"questionnaire|scale|item(?:s)?|item\s+bank|short\s+forms?)\b|"
+    r"item\s+bank|item\s+generation|cognitive\s+interview(?:ing)?|"
+    r"content\s+elicitation|short\s+forms?)",
+    flags=re.IGNORECASE,
+)
+_BOX1_TRANSLATION_ADAPTATION_RE = re.compile(
+    r"\b(?:translate|translation|cross-?cultural|adapt(?:ation|ed)?)\b",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -197,6 +211,22 @@ def run_provisional_assessment(
         instrument_id = instrument_context.instrument_id
         instrument_name = _first_string_value(instrument_context.instrument_name) or "unknown"
         normalized_instrument_name = _normalize_instrument_name(instrument_name)
+
+        if _is_box1_prom_development_eligible(
+            parsed_document=parsed,
+            context=context,
+            study_context=study_context,
+            instrument_context=instrument_context,
+        ):
+            # PROM development remains explicitly reviewer-in-the-loop in the
+            # provisional PROM pipeline: expose Box 1 as manual-input-required only.
+            rob_assessments.append(
+                assess_box1_prom_development(
+                    study_id=study_id,
+                    instrument_id=instrument_id,
+                    item_inputs=_box1_manual_inputs(fallback_evidence_id=fallback_evidence_id),
+                )
+            )
 
         # Content validity remains explicitly reviewer-in-the-loop in the
         # provisional PROM pipeline: expose Box 2 as manual-input-required only.
@@ -1612,6 +1642,19 @@ def _box3_inputs(
     return tuple(item_map[item_code] for item_code in BOX_3_ITEM_CODES)
 
 
+def _box1_manual_inputs(*, fallback_evidence_id: str) -> tuple[BoxItemInput, ...]:
+    return tuple(
+        BoxItemInput(
+            item_code=item_code,
+            item_rating=CosminItemRating.DOUBTFUL,
+            evidence_span_ids=[fallback_evidence_id],
+            uncertainty_status=UncertaintyStatus.REVIEWER_REQUIRED,
+            reviewer_decision_status=ReviewerDecisionStatus.PENDING,
+        )
+        for item_code in BOX_1_ITEM_CODES
+    )
+
+
 def _box2_manual_inputs(*, fallback_evidence_id: str) -> tuple[BoxItemInput, ...]:
     return tuple(
         BoxItemInput(
@@ -1623,6 +1666,52 @@ def _box2_manual_inputs(*, fallback_evidence_id: str) -> tuple[BoxItemInput, ...
         )
         for item_code in BOX_2_ITEM_CODES
     )
+
+
+def _is_box1_prom_development_eligible(
+    *,
+    parsed_document: ParsedMarkdownDocument,
+    context: ArticleContextExtractionResult,
+    study_context: StudyContextExtractionResult,
+    instrument_context: InstrumentContextExtractionResult,
+) -> bool:
+    if study_context.study_intent is not StudyIntent.PSYCHOMETRIC_VALIDATION:
+        return False
+
+    if instrument_context.instrument_type in (
+        InstrumentType.PBOM,
+        InstrumentType.PERFORMANCE_TEST,
+    ):
+        return False
+
+    if instrument_context.instrument_role is not InstrumentContextRole.TARGET_UNDER_APPRAISAL:
+        return False
+
+    if (
+        context.target_instrument_id is not None
+        and instrument_context.instrument_id != context.target_instrument_id
+    ):
+        return False
+
+    return _has_explicit_prom_development_aim_signal(parsed_document=parsed_document)
+
+
+def _has_explicit_prom_development_aim_signal(
+    *,
+    parsed_document: ParsedMarkdownDocument,
+) -> bool:
+    for sentence in parsed_document.sentences:
+        heading_tokens = " ".join(sentence.heading_path).lower()
+        if "references" in heading_tokens:
+            continue
+
+        sentence_text = sentence.provenance.raw_text
+        if not _BOX1_PROM_DEVELOPMENT_AIM_RE.search(sentence_text):
+            continue
+        if _BOX1_TRANSLATION_ADAPTATION_RE.search(sentence_text):
+            continue
+        return True
+    return False
 
 
 def _box4_inputs(
