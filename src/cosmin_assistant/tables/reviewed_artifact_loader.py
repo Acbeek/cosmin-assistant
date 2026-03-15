@@ -13,6 +13,7 @@ from cosmin_assistant.cosmin_rob import BoxAssessmentBundle
 from cosmin_assistant.extract import (
     ArticleContextExtractionResult,
     InstrumentContextExtractionResult,
+    StudyContextExtractionResult,
 )
 from cosmin_assistant.grade import ModifiedGradeResult
 from cosmin_assistant.measurement_rating import MeasurementPropertyRatingResult
@@ -46,16 +47,19 @@ _ModelT = TypeVar("_ModelT", bound=ModelBase)
 
 @dataclass(frozen=True)
 class ReviewedTableExportInputs:
-    """Typed payload required by template 7/8 builders."""
+    """Typed payload required by reviewed table builders."""
 
     input_dir: Path
     resolved_paths: dict[str, Path]
     review_state: ReviewState
+    study_contexts: tuple[StudyContextExtractionResult, ...]
     instrument_contexts: tuple[InstrumentContextExtractionResult, ...]
     rob_assessments: tuple[BoxAssessmentBundle, ...]
     measurement_results: tuple[MeasurementPropertyRatingResult, ...]
     synthesis_results: tuple[SynthesisAggregateResult, ...]
     grade_results: tuple[ModifiedGradeResult, ...]
+    article_file_path: str | None = None
+    article_markdown_text: str | None = None
 
 
 def load_reviewed_table_export_inputs(
@@ -120,11 +124,18 @@ def load_reviewed_table_export_inputs(
         path=resolved_paths["grade_json"],
         artifact_name=_ARTIFACT_BASENAMES["grade_json"],
     )
+    parsed_document_payload = evidence_payload.get("parsed_document")
+    article_markdown_text = None
+    if isinstance(parsed_document_payload, dict):
+        raw_text = parsed_document_payload.get("raw_text")
+        if isinstance(raw_text, str) and raw_text.strip():
+            article_markdown_text = raw_text
 
     return ReviewedTableExportInputs(
         input_dir=root,
         resolved_paths=resolved_paths,
         review_state=review_state,
+        study_contexts=context_extraction.study_contexts,
         instrument_contexts=context_extraction.instrument_contexts,
         rob_assessments=_validate_model_rows(
             payload=rob_payload,
@@ -146,6 +157,8 @@ def load_reviewed_table_export_inputs(
             model_type=ModifiedGradeResult,
             artifact_name=_ARTIFACT_BASENAMES["grade_json"],
         ),
+        article_file_path=context_extraction.file_path,
+        article_markdown_text=article_markdown_text,
     )
 
 

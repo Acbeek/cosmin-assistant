@@ -18,6 +18,7 @@ from cosmin_assistant.models import PropertyActivationStatus
 from cosmin_assistant.review import provisional_review_state
 from cosmin_assistant.tables.docx_stub import ProvisionalDocxExporter
 from cosmin_assistant.utils import (
+    canonicalize_artifact_prefix,
     git_commit_if_available,
     python_version_string,
     repo_root_from_file,
@@ -418,11 +419,7 @@ def _is_multi_outcome_interpretability_run(run: ProvisionalAssessmentRun) -> boo
 
 
 def _artifact_prefix_from_article_path(article_path: str) -> str:
-    raw_stem = Path(article_path).stem
-    with_underscores = re.sub(r"\s+", "_", raw_stem.strip())
-    sanitized = re.sub(r"[^A-Za-z0-9_-]", "", with_underscores)
-    compacted = re.sub(r"_+", "_", sanitized).strip("._-")
-    return compacted or "article"
+    return canonicalize_artifact_prefix(article_path=article_path, fallback="article")
 
 
 def _artifact_path_registry(

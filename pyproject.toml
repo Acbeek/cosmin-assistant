@@ -23,6 +23,7 @@ cosmin-assess = "cosmin_assistant.cli.app:run"
 cosmin-assess-batch = "cosmin_assistant.cli.batch_app:run_batch"
 cosmin-review = "cosmin_assistant.cli.review_app:run_review"
 cosmin-tables = "cosmin_assistant.cli.tables_app:run_tables"
+cosmin-metadata = "cosmin_assistant.cli.metadata_app:run_metadata"
 
 [project.optional-dependencies]
 dev = [

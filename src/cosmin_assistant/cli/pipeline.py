@@ -147,6 +147,53 @@ _BOX1_TRANSLATION_ADAPTATION_RE = re.compile(
     r"\b(?:translate|translation|cross-?cultural|adapt(?:ation|ed)?)\b",
     flags=re.IGNORECASE,
 )
+_STUDY_TOTAL_N_RE = re.compile(r"\b[nN]\s*=\s*(\d{2,5})\b")
+_STUDY_TOTAL_DATA_FROM_RE = re.compile(
+    r"\bdata\s+from\s+(\d{2,5})\s+(?:people|participants?|subjects?|patients?)\b",
+    re.IGNORECASE,
+)
+_STUDY_TOTAL_CONTEXT_RE = re.compile(
+    r"\b(participants?|respondents?|subjects?|patients?|people|study\s+sample|sample|dataset)\b",
+    re.IGNORECASE,
+)
+_STUDY_SUBGROUP_CONTEXT_RE = re.compile(
+    r"\b(subgroup|subgroups|subsample|group\s+\d+|per\s+subgroup)\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_HYPOTHESIS_SIGNAL_RE = re.compile(
+    r"\b(?:a[-\s]?priori|pre(?:defined|specified)\s+hypotheses?|"
+    r"(?:we|it)\s+hypothes(?:ize|ized)\b|hypothes(?:is|es|ized)\b)\b",
+    re.IGNORECASE,
+)
+_NEGATED_HYPOTHESIS_SIGNAL_RE = re.compile(
+    r"\b(?:no|not|without)\s+(?:predefined|a[-\s]?priori)?\s*hypotheses?\b",
+    re.IGNORECASE,
+)
+_RESPONSIVENESS_HYPOTHESIS_CONTEXT_RE = re.compile(
+    r"\b(responsiveness|change|follow-?up|baseline|intervention)\b",
+    re.IGNORECASE,
+)
+_FACTOR_ANALYSIS_SIGNAL_RE = re.compile(
+    r"\b(cfa|confirmatory\s+factor\s+analysis|factor\s+analysis|"
+    r"unidimensional(?:ity)?|dimensionality)\b",
+    re.IGNORECASE,
+)
+_IRT_RASCH_SIGNAL_RE = re.compile(
+    r"\b(irt|rasch|graded\s+response\s+model|grm|mokken|item\s+fit|infit|outfit|"
+    r"local\s+independence|local\s+dependence|monotonic(?:ity)?|threshold\s+ordering|"
+    r"differential\s+item\s+functioning|\bdif\b)\b",
+    re.IGNORECASE,
+)
+_STUDY_TOTAL_FALLBACK_PROPERTIES: frozenset[str] = frozenset(
+    {
+        MEASUREMENT_PROPERTY_STRUCTURAL_VALIDITY,
+        MEASUREMENT_PROPERTY_INTERNAL_CONSISTENCY,
+        MEASUREMENT_PROPERTY_CROSS_CULTURAL_VALIDITY,
+        MEASUREMENT_PROPERTY_CRITERION_VALIDITY,
+        MEASUREMENT_PROPERTY_CONSTRUCT_VALIDITY,
+        MEASUREMENT_PROPERTY_RESPONSIVENESS,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -189,6 +236,7 @@ def run_provisional_assessment(
 
     study_context = context.study_contexts[0]
     study_id = study_context.study_id
+    study_total_sample_size = _resolve_study_total_sample_size(parsed_document=parsed)
     instrument_sample_size_index = _build_instrument_sample_size_index(
         parsed_document=parsed,
         context=context,
@@ -274,6 +322,8 @@ def run_provisional_assessment(
                 instrument_context=instrument_context,
                 measurement_property=decision.measurement_property,
                 instrument_sample_size_index=instrument_sample_size_index,
+                study_total_sample_size=study_total_sample_size,
+                activation_status=decision.activation_status,
             )
 
             if (
@@ -304,6 +354,7 @@ def run_provisional_assessment(
                 fallback_evidence_id=fallback_evidence_id,
                 sample_size=resolved_sample_size,
                 study_context=study_context,
+                parsed_document=parsed,
                 structural_prerequisite_result=structural_by_instrument.get(instrument_id),
             )
             if box_bundle is not None:
@@ -351,7 +402,7 @@ def run_provisional_assessment(
             activation_status=result.activation_status,
         )
         for result in measurement_results
-        if result.activation_status in _SYNTHESIS_INCLUDED_STATUSES
+        if _include_measurement_result_in_synthesis(result)
     )
     synthesis_inputs = _normalize_synthesis_inputs_by_instrument_family(synthesis_inputs)
     synthesis_results = synthesize_first_pass(synthesis_inputs)
@@ -885,6 +936,7 @@ def _execute_direct_property_pipeline(
     fallback_evidence_id: str,
     sample_size: int | None,
     study_context: StudyContextExtractionResult,
+    parsed_document: ParsedMarkdownDocument,
     structural_prerequisite_result: MeasurementPropertyRatingResult | None,
 ) -> tuple[BoxAssessmentBundle | None, MeasurementPropertyRatingResult]:
     if measurement_property == MEASUREMENT_PROPERTY_STRUCTURAL_VALIDITY:
@@ -1001,7 +1053,11 @@ def _execute_direct_property_pipeline(
                 fallback_evidence_id=fallback_evidence_id,
             ),
         )
-        prerequisite = _hypotheses_prerequisite(candidates)
+        prerequisite = _hypotheses_prerequisite(
+            candidates,
+            parsed_document=parsed_document,
+            measurement_property=MEASUREMENT_PROPERTY_CONSTRUCT_VALIDITY,
+        )
         rating = rate_hypotheses_testing_for_construct_validity(
             study_id=study_id,
             instrument_id=instrument_id,
@@ -1020,7 +1076,11 @@ def _execute_direct_property_pipeline(
                 fallback_evidence_id=fallback_evidence_id,
             ),
         )
-        prerequisite = _hypotheses_prerequisite(candidates)
+        prerequisite = _hypotheses_prerequisite(
+            candidates,
+            parsed_document=parsed_document,
+            measurement_property=MEASUREMENT_PROPERTY_RESPONSIVENESS,
+        )
         rating = rate_responsiveness(
             study_id=study_id,
             instrument_id=instrument_id,
@@ -1236,8 +1296,11 @@ def _gold_standard_prerequisite(
 
 def _hypotheses_prerequisite(
     candidates: tuple[StatisticCandidate, ...],
+    *,
+    parsed_document: ParsedMarkdownDocument | None = None,
+    measurement_property: str | None = None,
 ) -> PrerequisiteDecision:
-    evidence_span_ids = merged_candidate_evidence(candidates)
+    evidence_span_ids = list(merged_candidate_evidence(candidates))
     if any(
         candidate.responsiveness_hypothesis_status is ResponsivenessHypothesisStatus.PREDEFINED
         for candidate in candidates
@@ -1246,22 +1309,80 @@ def _hypotheses_prerequisite(
             name=REQUIRED_HYPOTHESES_PREREQUISITE_NAME,
             status=PrerequisiteStatus.MET,
             detail="Predefined hypotheses were explicitly reported.",
-            evidence_span_ids=evidence_span_ids,
+            evidence_span_ids=tuple(evidence_span_ids),
         )
 
-    if any("a priori" in candidate.surrounding_text.lower() for candidate in candidates):
+    if any(
+        _candidate_has_explicit_hypothesis_signal(candidate.surrounding_text)
+        for candidate in candidates
+    ):
         return PrerequisiteDecision(
             name=REQUIRED_HYPOTHESES_PREREQUISITE_NAME,
             status=PrerequisiteStatus.MET,
-            detail="A-priori hypotheses language was detected.",
-            evidence_span_ids=evidence_span_ids,
+            detail="Explicit hypothesis language was detected in candidate evidence.",
+            evidence_span_ids=tuple(evidence_span_ids),
         )
+
+    if parsed_document is not None:
+        document_hypothesis_spans = _document_hypothesis_evidence_span_ids(
+            parsed_document=parsed_document,
+            measurement_property=measurement_property,
+        )
+        if document_hypothesis_spans:
+            evidence_span_ids.extend(
+                span_id for span_id in document_hypothesis_spans if span_id not in evidence_span_ids
+            )
+            return PrerequisiteDecision(
+                name=REQUIRED_HYPOTHESES_PREREQUISITE_NAME,
+                status=PrerequisiteStatus.MET,
+                detail="Explicit hypothesis language was detected in article text.",
+                evidence_span_ids=tuple(evidence_span_ids),
+            )
 
     return PrerequisiteDecision(
         name=REQUIRED_HYPOTHESES_PREREQUISITE_NAME,
         status=PrerequisiteStatus.MISSING,
         detail="Predefined hypotheses were not explicit in direct evidence.",
-        evidence_span_ids=evidence_span_ids,
+        evidence_span_ids=tuple(evidence_span_ids),
+    )
+
+
+def _candidate_has_explicit_hypothesis_signal(text: str) -> bool:
+    if _NEGATED_HYPOTHESIS_SIGNAL_RE.search(text):
+        return False
+    return bool(_EXPLICIT_HYPOTHESIS_SIGNAL_RE.search(text))
+
+
+def _document_hypothesis_evidence_span_ids(
+    *,
+    parsed_document: ParsedMarkdownDocument,
+    measurement_property: str | None,
+) -> tuple[str, ...]:
+    span_ids: list[str] = []
+    for sentence in parsed_document.sentences:
+        heading_tokens = " ".join(sentence.heading_path).lower()
+        if "references" in heading_tokens:
+            continue
+
+        text = sentence.provenance.raw_text
+        if not _candidate_has_explicit_hypothesis_signal(text):
+            continue
+        if (
+            measurement_property == MEASUREMENT_PROPERTY_RESPONSIVENESS
+            and _RESPONSIVENESS_HYPOTHESIS_CONTEXT_RE.search(text) is None
+        ):
+            continue
+        span_ids.append(sentence.id)
+
+    return tuple(dict.fromkeys(span_ids))
+
+
+def _include_measurement_result_in_synthesis(result: MeasurementPropertyRatingResult) -> bool:
+    if result.activation_status not in _SYNTHESIS_INCLUDED_STATUSES:
+        return False
+    return not (
+        result.measurement_property == MEASUREMENT_PROPERTY_RESPONSIVENESS
+        and result.activation_status is PropertyActivationStatus.REVIEWER_REQUIRED
     )
 
 
@@ -1307,6 +1428,47 @@ def _resolve_target_instrument_context(
             return instrument_context
 
     return context.instrument_contexts[0]
+
+
+def _resolve_study_total_sample_size(
+    *,
+    parsed_document: ParsedMarkdownDocument,
+) -> int | None:
+    scored_values: list[tuple[int, int]] = []
+    for sentence in parsed_document.sentences:
+        heading_tokens = " ".join(sentence.heading_path).lower()
+        if "references" in heading_tokens:
+            continue
+
+        text = sentence.provenance.raw_text
+        values = [int(match.group(1)) for match in _STUDY_TOTAL_N_RE.finditer(text)]
+        values.extend(int(match.group(1)) for match in _STUDY_TOTAL_DATA_FROM_RE.finditer(text))
+        if not values:
+            continue
+        if _STUDY_TOTAL_CONTEXT_RE.search(text) is None:
+            continue
+
+        text_lower = text.lower()
+        score = 0
+        if "final dataset" in text_lower or "included in the final dataset" in text_lower:
+            score += 3
+        if "study sample" in text_lower or "participants" in text_lower:
+            score += 2
+        if _STUDY_SUBGROUP_CONTEXT_RE.search(text_lower):
+            score -= 2
+        if "target" in text_lower and "respondent" in text_lower:
+            score -= 1
+
+        for value in values:
+            if value >= 10:
+                scored_values.append((score, value))
+
+    if not scored_values:
+        return None
+
+    best_score = max(score for score, _ in scored_values)
+    best_values = tuple(value for score, value in scored_values if score == best_score)
+    return _select_representative_sample_size(best_values)
 
 
 def _resolve_sample_size_for_property(
@@ -1368,7 +1530,19 @@ def _resolve_sample_size_for_result(
     instrument_context: InstrumentContextExtractionResult,
     measurement_property: str,
     instrument_sample_size_index: dict[str, tuple[int, ...]],
+    study_total_sample_size: int | None,
+    activation_status: PropertyActivationStatus,
 ) -> int | None:
+    if activation_status is PropertyActivationStatus.NOT_ASSESSED_IN_CURRENT_STUDY:
+        analyzed_sample_size = _resolve_sample_size_for_role(
+            study_context=study_context,
+            role=SampleSizeRole.ANALYZED,
+        )
+        if analyzed_sample_size is not None:
+            return analyzed_sample_size
+        if study_total_sample_size is not None:
+            return study_total_sample_size
+
     instrument_name = _first_string_value(instrument_context.instrument_name)
     if instrument_name:
         normalized_name = _normalize_instrument_name(instrument_name)
@@ -1376,10 +1550,46 @@ def _resolve_sample_size_for_result(
         if values:
             return _select_representative_sample_size(values)
 
-    return _resolve_sample_size_for_property(
+    role_sample_size = _resolve_sample_size_for_property(
         study_context=study_context,
         measurement_property=measurement_property,
     )
+    if _should_use_study_total_sample_size(
+        measurement_property=measurement_property,
+        role_sample_size=role_sample_size,
+        study_total_sample_size=study_total_sample_size,
+    ):
+        return study_total_sample_size
+
+    if role_sample_size is not None:
+        return role_sample_size
+    return study_total_sample_size
+
+
+def _resolve_sample_size_for_role(
+    *,
+    study_context: StudyContextExtractionResult,
+    role: SampleSizeRole,
+) -> int | None:
+    for observation in study_context.sample_size_observations:
+        if observation.role is role:
+            return observation.sample_size_normalized
+    return None
+
+
+def _should_use_study_total_sample_size(
+    *,
+    measurement_property: str,
+    role_sample_size: int | None,
+    study_total_sample_size: int | None,
+) -> bool:
+    if measurement_property not in _STUDY_TOTAL_FALLBACK_PROPERTIES:
+        return False
+    if study_total_sample_size is None:
+        return False
+    if role_sample_size is None:
+        return True
+    return role_sample_size <= 5 and study_total_sample_size >= 50
 
 
 def _build_instrument_sample_size_index(
@@ -1607,26 +1817,54 @@ def _box3_inputs(
     sample_size: int | None,
     fallback_evidence_id: str,
 ) -> tuple[BoxItemInput, ...]:
-    structural_stats = _select_stat_candidates(
-        statistic_candidates,
-        (StatisticType.CFI, StatisticType.TLI, StatisticType.RMSEA, StatisticType.SRMR),
+    factor_analysis_candidates = tuple(
+        candidate
+        for candidate in statistic_candidates
+        if candidate.statistic_type
+        in (
+            StatisticType.CFI,
+            StatisticType.TLI,
+            StatisticType.RMSEA,
+            StatisticType.SRMR,
+        )
+        or (
+            candidate.statistic_type is StatisticType.INTERNAL_STRUCTURE_FINDING
+            and _has_factor_analysis_signal(candidate.surrounding_text)
+        )
     )
-    has_structural_stat = bool(structural_stats)
-    structural_evidence = _evidence_for_candidates(structural_stats, fallback_evidence_id)
+    has_factor_analysis = bool(factor_analysis_candidates)
+    factor_analysis_evidence = _evidence_for_candidates(
+        factor_analysis_candidates,
+        fallback_evidence_id,
+    )
+    irt_rasch_candidates = tuple(
+        candidate
+        for candidate in statistic_candidates
+        if candidate.statistic_type
+        in (
+            StatisticType.INTERNAL_STRUCTURE_FINDING,
+            StatisticType.DIF_FINDING,
+        )
+        and _has_irt_or_rasch_signal(candidate.surrounding_text)
+    )
+    has_irt_rasch = bool(irt_rasch_candidates)
+    irt_rasch_evidence = _evidence_for_candidates(irt_rasch_candidates, fallback_evidence_id)
     sample_rating = _sample_size_item_rating(sample_size)
 
     item_map = {
         BOX_3_ITEM_CODES[0]: BoxItemInput(
             item_code=BOX_3_ITEM_CODES[0],
             item_rating=(
-                CosminItemRating.ADEQUATE if has_structural_stat else CosminItemRating.INADEQUATE
+                CosminItemRating.ADEQUATE if has_factor_analysis else CosminItemRating.INADEQUATE
             ),
-            evidence_span_ids=structural_evidence,
+            evidence_span_ids=factor_analysis_evidence,
         ),
         BOX_3_ITEM_CODES[1]: BoxItemInput(
             item_code=BOX_3_ITEM_CODES[1],
-            item_rating=CosminItemRating.NOT_APPLICABLE,
-            evidence_span_ids=[fallback_evidence_id],
+            item_rating=(
+                CosminItemRating.ADEQUATE if has_irt_rasch else CosminItemRating.NOT_APPLICABLE
+            ),
+            evidence_span_ids=irt_rasch_evidence if has_irt_rasch else [fallback_evidence_id],
         ),
         BOX_3_ITEM_CODES[2]: BoxItemInput(
             item_code=BOX_3_ITEM_CODES[2],
@@ -1640,6 +1878,14 @@ def _box3_inputs(
         ),
     }
     return tuple(item_map[item_code] for item_code in BOX_3_ITEM_CODES)
+
+
+def _has_factor_analysis_signal(text: str) -> bool:
+    return bool(_FACTOR_ANALYSIS_SIGNAL_RE.search(text))
+
+
+def _has_irt_or_rasch_signal(text: str) -> bool:
+    return bool(_IRT_RASCH_SIGNAL_RE.search(text))
 
 
 def _box1_manual_inputs(*, fallback_evidence_id: str) -> tuple[BoxItemInput, ...]:
@@ -1969,7 +2215,11 @@ def _box9_inputs(
     evidence = _evidence_for_candidates(relevant, fallback_evidence_id)
     has_relevant = bool(relevant)
     hypotheses_predefined = any(
-        "a priori" in candidate.surrounding_text.lower() for candidate in relevant
+        (
+            candidate.responsiveness_hypothesis_status is ResponsivenessHypothesisStatus.PREDEFINED
+            or _candidate_has_explicit_hypothesis_signal(candidate.surrounding_text)
+        )
+        for candidate in relevant
     )
 
     item_map = {

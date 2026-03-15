@@ -113,11 +113,71 @@ Runtime hardening now in place:
 
 ## CLI usage
 
-Run provisional assessment:
+Before running any CLI command, install `cosmin-assistant` in your active virtual environment:
 
 ```bash
-cosmin-assess article.md --profile prom --out results/run1
+source venv313/bin/activate
+python -m pip install -e ".[dev]"
+hash -r
+which cosmin-assess
+which cosmin-metadata
 ```
+
+This install provides the console commands: `cosmin-assess`, `cosmin-assess-batch`, `cosmin-review`, `cosmin-tables`, and `cosmin-metadata`.
+Use `cosmin-assess` (double `s`), not `cosmin-asses`.
+
+Example workflow for a brand-new exploratory paper (metadata-first):
+
+```bash
+cosmin-metadata init --article NonSci_Hagberg2022.md
+```
+
+```bash
+cosmin-assess NonSci_Hagberg2022.md --profile prom --out results/hagberg2022_run1
+```
+
+```bash
+cosmin-review results/hagberg2022_run1 --review-file review_request.yaml --out results/hagberg2022_run1_final --finalize
+```
+
+`metadata/nonsci_hagberg2022.yaml` is the metadata/governance input for `cosmin-metadata`.
+`review_request.yaml` is a separate reviewer-authored YAML/JSON bundle for `cosmin-review --review-file`; it is not the metadata YAML.
+
+```bash
+cosmin-metadata review \
+  --metadata metadata/nonsci_hagberg2022.yaml \
+  --run-dir results/hagberg2022_run1_final \
+  --json \
+  --report-out results/hagberg2022_run1_final/metadata_review_finalized.json
+```
+
+```bash
+cosmin-metadata decide \
+  --metadata metadata/nonsci_hagberg2022.yaml \
+  --review-summary results/hagberg2022_run1_final/metadata_review_finalized.json
+```
+
+```bash
+cosmin-tables --input-dir results/hagberg2022_run1_final --out-dir results/hagberg2022_run1_final/tables --template all
+```
+
+Workflow notes:
+
+- metadata-first is the default for new papers.
+- optional provisional triage is available if you want an early metadata-vs-run check before review/finalize:
+
+```bash
+cosmin-metadata review \
+  --metadata metadata/nonsci_hagberg2022.yaml \
+  --run-dir results/hagberg2022_run1 \
+  --json \
+  --report-out results/hagberg2022_run1/metadata_review_provisional.json
+```
+
+- Phase 4 governance should be based on reviewed/finalized outputs, not only provisional outputs.
+- table export is downstream of scientific review/finalization; it does not determine acceptability.
+- `review_state.json` provisional/finalized is runtime review state.
+- metadata `corpus_tier` exploratory/protected is corpus governance state.
 
 Run thin batch orchestration over a directory of parsed markdown files:
 
@@ -131,42 +191,30 @@ Stop batch immediately on first failing article:
 cosmin-assess-batch /path/to/parsed_markdown_dir --profile prom --out results/batch_run1 --fail-fast
 ```
 
-Apply reviewer overrides/adjudication and finalize:
+Create one metadata shell interactively (Phase 2 intake helper):
 
 ```bash
-cosmin-review results/run1 --review-file review_request.yaml --out results/run1_final --finalize
+cosmin-metadata init --article /path/to/article.md --out metadata/paper.yaml --paper-id paper_id
 ```
 
-Export Template 7/8 tables from reviewed artifacts:
+Notes:
 
-```bash
-find results -type f -name review_state.json
-cosmin-tables --input-dir results/run1_final --out-dir results/run1_final/tables --template all
-```
+- `corpus_tier` defaults to `exploratory`.
+- codebook-backed fields are selected interactively by menu number or token.
+- `key_active_properties` may be represented either in ordinary measurement/synthesis outputs or in reviewer-required Box 1/Box 2 workflow lanes.
+- default metadata/output naming uses canonical machine-readable identifiers (`paper_id`/article stem), not reviewer prose fields.
+- explicit `--out` paths still override canonical defaults.
+- output is validated and written as canonical YAML only after final confirmation.
+- existing files require explicit overwrite confirmation or `--overwrite`.
+- metadata YAML is for `cosmin-metadata init/review/decide`.
+- `review_request.yaml` is a separate YAML/JSON review request bundle for `cosmin-review --review-file`; it is not the metadata YAML.
 
-Export from provisional reviewed artifacts only when explicitly allowed:
-
-```bash
-cosmin-tables --input-dir results/run1_reviewed --out-dir results/run1_reviewed/tables --template all --allow-provisional
-```
-
-Minimal `review_request.yaml` shape:
+Minimal starter `review_request.yaml` shape:
 
 ```yaml
-overrides:
-  - target_object_type: measurement_property_result
-    target_object_id: mpr.example
-    field_name: computed_rating
-    overridden_value: "?"
-    reason: Reviewer adjudication after conflict check
-    reviewer_id: reviewer.01
-    evidence_span_ids: [sen.1001]
-adjudication_notes:
-  - decision_key: adequacy_of_hypotheses
-    decision_value: confirmed
-    reason: Hypotheses were predefined in protocol
-    reviewer_id: reviewer.01
-    evidence_span_ids: [sen.1001]
+overrides: []
+adjudication_notes: []
+finalize: true
 ```
 
 ## Output artifacts
@@ -198,16 +246,24 @@ Reviewed/finalized run outputs include the same files with updated review metada
 Table exports (`cosmin-tables`) from reviewed/finalized artifacts:
 
 - default destination: `<input-dir>/tables/` (or `--out-dir`)
+- `template_6.json`
+- `template_6.csv`
+- `template_6.docx`
 - `template_7.json`
 - `template_7.csv`
 - `template_7.docx`
 - `template_8.json`
 - `template_8.csv`
 - `template_8.docx`
-- selective export supported via `--template 7`, `--template 8`, or `--template all`
+- selective export supported via `--template 6`, `--template 7`, `--template 8`, or `--template all`
 - finalized review state required by default; use `--allow-provisional` to opt in to provisional export
 
-Template 5/7/8 exporters also remain available through Python APIs.
+Template 5/6/7/8 exporters also remain available through Python APIs.
+
+Reviewed/finalized outputs now retain run-manifest provenance explicitly:
+
+- `run_manifest.json` is always copied from the source output directory into the reviewed/finalized directory
+- when a prefixed manifest is present (for example `<artifact_prefix>__run_manifest.json`), it is copied through as well
 
 ## Installation
 

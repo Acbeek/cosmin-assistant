@@ -1625,7 +1625,7 @@ def _extract_sample_size_observations(
                     )
                 )
 
-    # Backward-compatible fallback for fixtures with only generic N statements.
+    # Backward-compatible fallback for inputs with only generic N statements.
     if not drafts and sample_sizes.candidates:
         for candidate in sample_sizes.candidates:
             if isinstance(candidate.normalized_value, int):

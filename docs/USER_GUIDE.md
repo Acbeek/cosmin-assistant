@@ -228,6 +228,21 @@ mypy src
 pytest -q
 ```
 
+## Before running CLI commands
+
+Install `cosmin-assistant` in your active virtual environment first:
+
+```bash
+source venv313/bin/activate
+python -m pip install -e ".[dev]"
+hash -r
+which cosmin-assess
+which cosmin-metadata
+```
+
+This installation provides: `cosmin-assess`, `cosmin-assess-batch`, `cosmin-review`, `cosmin-tables`, and `cosmin-metadata`.
+Use `cosmin-assess` (double `s`), not `cosmin-asses`.
+
 ## Expected input files
 
 Input is parsed markdown (`.md`) from outcome-measurement study reports.
@@ -312,23 +327,15 @@ What batch currently does not do:
 cosmin-assess /path/to/article.md --profile prom --out results/run1
 ```
 
-2. Create review request file (YAML or JSON):
+2. Create `review_request.yaml` (or `.json`).
+
+`metadata/paper.yaml` is the metadata/governance input for `cosmin-metadata`.
+`review_request.yaml` is a separate reviewer-authored YAML/JSON bundle for `cosmin-review --review-file`; it is not the metadata YAML.
 
 ```yaml
-overrides:
-  - target_object_type: measurement_property_result
-    target_object_id: mpr.example
-    field_name: computed_rating
-    overridden_value: "?"
-    reason: conflicting evidence unresolved
-    reviewer_id: reviewer.01
-    evidence_span_ids: [sen.101]
-adjudication_notes:
-  - decision_key: explanation_of_inconsistency
-    decision_value: subgroup_mix_explains_difference
-    reason: heterogeneity across prosthesis subgroups
-    reviewer_id: reviewer.01
-    evidence_span_ids: [sen.101]
+overrides: []
+adjudication_notes: []
+finalize: true
 ```
 
 3. Apply review and finalize:
@@ -338,6 +345,126 @@ cosmin-review results/run1 --review-file review_request.yaml --out results/run1_
 ```
 
 Use `--keep-provisional` if you want a reviewed-but-not-finalized output set.
+
+## Example order for a new exploratory paper (metadata-first)
+
+Use this order for a brand-new paper such as `NonSci_Hagberg2022.md`:
+
+1. Create metadata shell first:
+
+```bash
+cosmin-metadata init --article NonSci_Hagberg2022.md
+```
+
+2. Run single-paper provisional appraisal:
+
+```bash
+cosmin-assess NonSci_Hagberg2022.md --profile prom --out results/hagberg2022_run1
+```
+
+3. If scientifically usable, apply reviewer finalize:
+
+```bash
+cosmin-review results/hagberg2022_run1 --review-file review_request.yaml --out results/hagberg2022_run1_final --finalize
+```
+
+`metadata/nonsci_hagberg2022.yaml` remains the metadata/governance input for `cosmin-metadata`.
+`review_request.yaml` is the separate review request bundle passed to `cosmin-review --review-file`.
+
+4. Review metadata against finalized outputs:
+
+```bash
+cosmin-metadata review \
+  --metadata metadata/nonsci_hagberg2022.yaml \
+  --run-dir results/hagberg2022_run1_final \
+  --json \
+  --report-out results/hagberg2022_run1_final/metadata_review_finalized.json
+```
+
+5. Record governance outcome / optional promotion (Phase 4):
+
+```bash
+cosmin-metadata decide \
+  --metadata metadata/nonsci_hagberg2022.yaml \
+  --review-summary results/hagberg2022_run1_final/metadata_review_finalized.json
+```
+
+6. Export tables only if needed, after scientific review/finalization:
+
+```bash
+cosmin-tables --input-dir results/hagberg2022_run1_final --out-dir results/hagberg2022_run1_final/tables --template all
+```
+
+Workflow notes:
+
+- metadata-first is the default for new exploratory-paper intake
+- optional provisional triage is available if you want an early metadata-vs-run check before review/finalize:
+
+```bash
+cosmin-metadata review \
+  --metadata metadata/nonsci_hagberg2022.yaml \
+  --run-dir results/hagberg2022_run1 \
+  --json \
+  --report-out results/hagberg2022_run1/metadata_review_provisional.json
+```
+
+- Phase 4 governance should be based on reviewed/finalized outputs, not only provisional outputs
+- table export is downstream reporting; it does not determine scientific acceptability
+- `review_state.json` provisional/finalized is runtime review state
+- metadata `corpus_tier` exploratory/protected is corpus governance state
+
+## Single-paper metadata intake helper (Phase 2)
+
+Use the metadata helper to create one validated metadata shell without memorizing enum tokens:
+
+```bash
+cosmin-metadata init --article /path/to/article.md --out metadata/paper.yaml --paper-id paper_id
+```
+
+Behavior:
+
+- `corpus_tier` defaults to `exploratory`
+- codebook-backed fields use interactive menu selections (number or token)
+- `key_active_properties` may be represented either in ordinary measurement/synthesis outputs or in reviewer-required Box 1/Box 2 workflow lanes
+- default metadata/output filenames are derived from canonical machine identifiers (`paper_id`/article stem), not reviewer notes/labels
+- explicit `--out` paths still take precedence over canonical defaults
+- multi-select fields accept comma-separated values
+- canonical YAML is shown for confirmation before write
+- overwrite requires explicit confirmation or `--overwrite`
+
+## Single-paper metadata review helper (Phase 3)
+
+Use the review helper to compare one metadata shell against one run output directory:
+
+```bash
+cosmin-metadata review --metadata metadata/paper.yaml --run-dir results/run1
+```
+
+Phase boundary:
+
+- Phase 2 creates metadata expectations for one paper.
+- Phase 3 reviews one run against those expectations and reports conservative `pass`/`flag`/`unknown` checks.
+- Phase 4 records governance outcome and optional manual promotion/writeback.
+
+## Single-paper governance writeback (Phase 4)
+
+Use the governance helper to record one review outcome and optional promotion decision:
+
+```bash
+cosmin-metadata decide --metadata metadata/paper.yaml --run-dir results/run1_final
+```
+
+You can also reuse a saved Phase 3 JSON summary instead of `--run-dir`:
+
+```bash
+cosmin-metadata decide --metadata metadata/paper.yaml --review-summary results/run1_final/review_summary.json
+```
+
+Governance distinction:
+
+- runtime `review_state.json` (provisional/finalized) is review-artifact state
+- metadata `corpus_tier` (`exploratory`/`protected`) is corpus-governance state
+- promotion from exploratory to protected is always explicit/manual and never automatic
 
 ## Output files
 
@@ -369,19 +496,24 @@ Updated by `cosmin-review`:
 - reviewed summary markdown
 - non-empty override/adjudication history when used
 - `review_state.json` set to finalized/provisional according to flag
+- `run_manifest.json` copied through from the source output set
+- prefixed run manifest copied through as well when present (`<artifact_prefix>__run_manifest.json`)
 
 Generated by `cosmin-tables` (from a reviewed/finalized output directory):
 
 - requires `review_state.json` and finalized review status by default
 - use `--allow-provisional` to explicitly permit provisional export
 - default output folder: `<input-dir>/tables/` (or custom `--out-dir`)
+- `template_6.json`
+- `template_6.csv`
+- `template_6.docx`
 - `template_7.json`
 - `template_7.csv`
 - `template_7.docx`
 - `template_8.json`
 - `template_8.csv`
 - `template_8.docx`
-- choose `--template 7`, `--template 8`, or `--template all`
+- choose `--template 6`, `--template 7`, `--template 8`, or `--template all`
 
 Example:
 
@@ -399,9 +531,11 @@ cosmin-tables --input-dir results/run1_reviewed --out-dir results/run1_reviewed/
 Also available through Python API:
 
 - Template 5 equivalent table object + CSV/JSON-ready conversion
+- Template 6 equivalent table object + CSV/JSON-ready conversion
 - Template 7 equivalent table object + CSV/JSON-ready conversion
 - Template 8 equivalent table object + CSV/JSON-ready conversion
 - Template 5 DOCX export from intermediate table object
+- Template 6 DOCX export from intermediate table object
 - Template 7 DOCX export from intermediate table object
 - Template 8 DOCX export from intermediate table object
 

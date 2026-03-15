@@ -9,27 +9,38 @@ from __future__ import annotations
 import hashlib
 import re
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, TypeVar
 
 import pandas as pd
 
-from cosmin_assistant.cosmin_rob import BoxAssessmentBundle
+from cosmin_assistant.cosmin_rob import BOX_1_KEY, BOX_2_KEY, BoxAssessmentBundle
 from cosmin_assistant.extract import (
     ContextFieldExtraction,
     ContextValueCandidate,
     FieldDetectionStatus,
     InstrumentContextExtractionResult,
+    InstrumentContextRole,
     SampleSizeRole,
     StudyContextExtractionResult,
 )
 from cosmin_assistant.grade import ModifiedGradeResult
 from cosmin_assistant.measurement_rating import MeasurementPropertyRatingResult, RawResultRecord
-from cosmin_assistant.models import ModelBase, PropertyActivationStatus
+from cosmin_assistant.models import (
+    CosminItemAssessment,
+    ModelBase,
+    PropertyActivationStatus,
+    ReviewerDecisionStatus,
+    UncertaintyStatus,
+)
 from cosmin_assistant.synthesize import SynthesisAggregateResult
 from cosmin_assistant.tables.intermediate_models import (
     TableLegendEntry,
     Template5CharacteristicsRow,
     Template5CharacteristicsTable,
+    Template6ContentValidityRow,
+    Template6ContentValidityTable,
+    Template6RowKind,
     Template7EvidenceRow,
     Template7EvidenceTable,
     Template7RowKind,
@@ -41,6 +52,7 @@ InstrumentKey = tuple[str, str | None, str | None]
 _TableModelT = TypeVar(
     "_TableModelT",
     Template5CharacteristicsTable,
+    Template6ContentValidityTable,
     Template7EvidenceTable,
     Template8SummaryTable,
 )
@@ -50,18 +62,112 @@ _TEMPLATE7_SUBSCALE_FRAGMENT_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _TEMPLATE7_SUBSCALE_ALLOWED_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 /&+().-]*$")
+_TEMPLATE5_EXCLUDED_ROLES: frozenset[InstrumentContextRole] = frozenset(
+    {
+        InstrumentContextRole.COMPARATOR,
+        InstrumentContextRole.COMPARATOR_ONLY,
+        InstrumentContextRole.BACKGROUND_ONLY,
+    }
+)
+_TEMPLATE5_PREFERRED_ROLES: frozenset[InstrumentContextRole] = frozenset(
+    {
+        InstrumentContextRole.TARGET_UNDER_APPRAISAL,
+        InstrumentContextRole.CO_PRIMARY_OUTCOME_INSTRUMENT,
+        InstrumentContextRole.SECONDARY_OUTCOME_INSTRUMENT,
+    }
+)
+_TEMPLATE5_EXCLUDED_NAME_TOKENS: frozenset[str] = frozenset(
+    {
+        "ANOVA",
+        "ANCOVA",
+        "MANOVA",
+        "MANCOVA",
+        "CFA",
+        "EFA",
+        "CTT",
+        "IRT",
+        "WLSMV",
+        "PROM",
+        "PROMS",
+    }
+)
+_TEMPLATE5_EXCLUDED_NAME_PHRASES: frozenset[str] = frozenset(
+    {
+        "confirmatory factor analysis",
+        "item response theory",
+        "classical test theory",
+        "weighted least squares mean and variance adjusted",
+    }
+)
+_ARTICLE_AUTHOR_YEAR_TOKEN_PATTERN = re.compile(r"(?P<author>[A-Za-z]+)(?P<year>(?:19|20)\d{2})$")
+_ARTICLE_YEAR_TOKEN_PATTERN = re.compile(r"^(?:19|20)\d{2}$")
+_ARTICLE_PUBLISHED_YEAR_PATTERN = re.compile(
+    r"published(?:\s+online)?[^0-9]{0,40}(?P<year>(?:19|20)\d{2})",
+    flags=re.IGNORECASE,
+)
+_ARTICLE_COPYRIGHT_YEAR_PATTERN = re.compile(
+    r"copyright[^0-9]{0,20}(?P<year>(?:19|20)\d{2})",
+    flags=re.IGNORECASE,
+)
+_ARTICLE_YEAR_PATTERN = re.compile(r"\b(?P<year>(?:19|20)\d{2})\b")
+_DISPLAY_LABEL_GENERIC_TOKENS: frozenset[str] = frozenset(
+    {
+        "activity",
+        "alpha",
+        "amp",
+        "article",
+        "bank",
+        "context",
+        "core",
+        "e2e",
+        "fields",
+        "generic",
+        "headings",
+        "headtohead",
+        "holdout",
+        "item",
+        "latex",
+        "longitudinal",
+        "markdown",
+        "mcid",
+        "missing",
+        "multiple",
+        "nested",
+        "nonsci",
+        "noisy",
+        "patterns",
+        "pbom",
+        "prom",
+        "rasch",
+        "repeated",
+        "repair",
+        "run",
+        "sci",
+        "statistics",
+        "straightforward",
+        "subsamples",
+        "table",
+        "validation",
+        "validity",
+    }
+)
 
 
 def build_template5_characteristics_table(
     *,
     study_contexts: tuple[StudyContextExtractionResult, ...],
     instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
+    measurement_results: tuple[MeasurementPropertyRatingResult, ...] = (),
+    article_file_path: str | None = None,
+    article_markdown_text: str | None = None,
 ) -> Template5CharacteristicsTable:
     """Build template 5 equivalent rows for study characteristics."""
 
     study_by_id = {context.study_id: context for context in study_contexts}
+    analyzed_sample_sizes = _template5_analyzed_sample_size_map(measurement_results)
+    table_contexts = _template5_table_contexts(instrument_contexts)
     grouped: dict[InstrumentKey, list[InstrumentContextExtractionResult]] = defaultdict(list)
-    for context in instrument_contexts:
+    for context in table_contexts:
         grouped[_instrument_key_from_context(context)].append(context)
 
     rows: list[Template5CharacteristicsRow] = []
@@ -84,6 +190,11 @@ def build_template5_characteristics_table(
                     instrument_version=instrument_version,
                     subscale=subscale,
                     study_id=context.study_id,
+                    study_display_label=_study_display_label(
+                        context.study_id,
+                        article_file_path=article_file_path,
+                        article_markdown_text=article_markdown_text,
+                    ),
                     study_order_within_instrument=index,
                     is_additional_study_row=index > 1,
                     study_design=_study_field_text(study, "study_design"),
@@ -91,7 +202,11 @@ def build_template5_characteristics_table(
                     language=_study_field_text(study, "language"),
                     country=_study_field_text(study, "country"),
                     enrollment_n=_sample_size_for_role(study, SampleSizeRole.ENROLLMENT),
-                    analyzed_n=_sample_size_for_role(study, SampleSizeRole.ANALYZED),
+                    analyzed_n=_template5_analyzed_n(
+                        study=study,
+                        instrument_context=context,
+                        analyzed_sample_sizes=analyzed_sample_sizes,
+                    ),
                     limb_level_n=_sample_size_for_role(study, SampleSizeRole.LIMB_LEVEL),
                     follow_up_schedule=_study_field_text(study, "follow_up_schedule"),
                     measurement_properties_mentioned=_study_field_text(
@@ -108,6 +223,123 @@ def build_template5_characteristics_table(
     )
 
 
+def build_template6_content_validity_table(
+    *,
+    study_contexts: tuple[StudyContextExtractionResult, ...],
+    instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
+    rob_assessments: tuple[BoxAssessmentBundle, ...],
+    article_file_path: str | None = None,
+    article_markdown_text: str | None = None,
+) -> Template6ContentValidityTable:
+    """Build template 6 equivalent rows for PROM development/content validity studies."""
+
+    instrument_key_by_id = _template6_instrument_key_by_id(instrument_contexts)
+    target_instrument_ids = {
+        context.instrument_id
+        for context in instrument_contexts
+        if context.instrument_role is InstrumentContextRole.TARGET_UNDER_APPRAISAL
+    }
+    content_validity_study_ids = _study_ids_with_content_validity_signal(study_contexts)
+    box1_pairs = {
+        (bundle.box_assessment.study_id, bundle.box_assessment.instrument_id)
+        for bundle in rob_assessments
+        if bundle.box_assessment.cosmin_box == BOX_1_KEY
+    }
+
+    rows: list[Template6ContentValidityRow] = []
+    for bundle in sorted(
+        rob_assessments,
+        key=lambda item: _template6_bundle_sort_key(
+            bundle=item,
+            instrument_key_by_id=instrument_key_by_id,
+        ),
+    ):
+        box = bundle.box_assessment
+        if box.cosmin_box not in (BOX_1_KEY, BOX_2_KEY):
+            continue
+
+        if target_instrument_ids and box.instrument_id not in target_instrument_ids:
+            continue
+
+        if (
+            box.cosmin_box == BOX_2_KEY
+            and (box.study_id, box.instrument_id) not in box1_pairs
+            and box.study_id not in content_validity_study_ids
+        ):
+            continue
+
+        instrument_key = instrument_key_by_id.get(
+            box.instrument_id,
+            (f"instrument:{box.instrument_id}", None, None),
+        )
+        rows.append(
+            Template6ContentValidityRow(
+                id=_stable_id(
+                    "t6row",
+                    "box",
+                    instrument_key[0],
+                    instrument_key[1] or "",
+                    instrument_key[2] or "",
+                    box.study_id,
+                    box.cosmin_box,
+                ),
+                row_kind=Template6RowKind.BOX_SUMMARY,
+                instrument_name=instrument_key[0],
+                instrument_version=instrument_key[1],
+                subscale=instrument_key[2],
+                study_id=box.study_id,
+                study_display_label=_study_display_label(
+                    box.study_id,
+                    article_file_path=article_file_path,
+                    article_markdown_text=article_markdown_text,
+                ),
+                cosmin_box=box.cosmin_box,
+                measurement_property=box.measurement_property,
+                box_rating=box.box_rating.value,
+                uncertainty_status=box.uncertainty_status.value,
+                reviewer_decision_status=box.reviewer_decision_status.value,
+            )
+        )
+
+        for item in sorted(bundle.item_assessments, key=lambda value: (value.item_code, value.id)):
+            rows.append(
+                Template6ContentValidityRow(
+                    id=_stable_id(
+                        "t6row",
+                        "item",
+                        instrument_key[0],
+                        instrument_key[1] or "",
+                        instrument_key[2] or "",
+                        box.study_id,
+                        box.cosmin_box,
+                        item.item_code,
+                    ),
+                    row_kind=Template6RowKind.ITEM,
+                    instrument_name=instrument_key[0],
+                    instrument_version=instrument_key[1],
+                    subscale=instrument_key[2],
+                    study_id=box.study_id,
+                    study_display_label=_study_display_label(
+                        box.study_id,
+                        article_file_path=article_file_path,
+                        article_markdown_text=article_markdown_text,
+                    ),
+                    cosmin_box=box.cosmin_box,
+                    measurement_property=box.measurement_property,
+                    item_code=item.item_code,
+                    item_rating=_template6_item_rating_display(item),
+                    uncertainty_status=item.uncertainty_status.value,
+                    reviewer_decision_status=item.reviewer_decision_status.value,
+                )
+            )
+
+    return Template6ContentValidityTable(
+        id=_stable_id("table", "template_6", len(rows)),
+        rows=tuple(rows),
+        legends=_template6_legends(),
+    )
+
+
 def build_template7_evidence_table(
     *,
     instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
@@ -116,6 +348,8 @@ def build_template7_evidence_table(
     synthesis_results: tuple[SynthesisAggregateResult, ...],
     grade_results: tuple[ModifiedGradeResult, ...],
     measurement_properties_universe: tuple[str, ...] | None = None,
+    article_file_path: str | None = None,
+    article_markdown_text: str | None = None,
 ) -> Template7EvidenceTable:
     """Build template 7 equivalent rows with study and summary levels."""
 
@@ -185,6 +419,11 @@ def build_template7_evidence_table(
                         subscale=instrument_key[2],
                         measurement_property=measurement_property,
                         study_id=result.study_id,
+                        study_display_label=_study_display_label(
+                            result.study_id,
+                            article_file_path=article_file_path,
+                            article_markdown_text=article_markdown_text,
+                        ),
                         study_order_within_instrument_property=index,
                         is_additional_study_row=index > 1,
                         per_study_rob=rob_map.get(
@@ -304,6 +543,21 @@ def template5_to_dataframe(table: Template5CharacteristicsTable) -> pd.DataFrame
     return _rows_to_dataframe(table.rows)
 
 
+def template6_to_dataframe(table: Template6ContentValidityTable) -> pd.DataFrame:
+    """Convert template 6 table rows to a CSV-ready data frame."""
+
+    return _rows_to_dataframe(table.rows)
+
+
+def _template6_item_rating_display(item: CosminItemAssessment) -> str | None:
+    if (
+        item.uncertainty_status is UncertaintyStatus.REVIEWER_REQUIRED
+        and item.reviewer_decision_status is ReviewerDecisionStatus.PENDING
+    ):
+        return None
+    return item.item_rating.value
+
+
 def template7_to_dataframe(table: Template7EvidenceTable) -> pd.DataFrame:
     """Convert template 7 table rows to a CSV-ready data frame."""
 
@@ -324,7 +578,99 @@ def table_to_json_ready(table: _TableModelT) -> dict[str, Any]:
 
 def _rows_to_dataframe(rows: tuple[ModelBase, ...]) -> pd.DataFrame:
     payload = [row.model_dump(mode="json") for row in rows]
-    return pd.DataFrame(payload)
+    frame = pd.DataFrame(payload)
+    if "study_display_label" in frame.columns and "study_id" in frame.columns:
+        study_values = frame["study_display_label"].where(
+            frame["study_display_label"].notna(),
+            frame["study_id"],
+        )
+        if "row_kind" in frame.columns:
+            study_values = study_values.where(
+                frame["row_kind"] != Template7RowKind.SUMMARY.value,
+                "Summary",
+            )
+        frame.insert(frame.columns.get_loc("study_id"), "study", study_values)
+        frame = frame.drop(columns=["study_display_label"])
+    return frame
+
+
+def _study_display_label(
+    study_id: str | None,
+    *,
+    article_file_path: str | None,
+    article_markdown_text: str | None,
+) -> str | None:
+    if study_id is None:
+        return None
+    citation_label = _article_citation_display_label(
+        article_file_path=article_file_path,
+        article_markdown_text=article_markdown_text,
+    )
+    if citation_label is not None:
+        return citation_label
+    return study_id
+
+
+def _article_citation_display_label(
+    *,
+    article_file_path: str | None,
+    article_markdown_text: str | None,
+) -> str | None:
+    author, year = _author_year_from_article_path(article_file_path)
+    if year is None:
+        year = _publication_year_from_article_text(article_markdown_text)
+    if author is None:
+        return None
+    if year is not None:
+        return f"{author} et al., {year}"
+    return f"{author} et al."
+
+
+def _author_year_from_article_path(article_file_path: str | None) -> tuple[str | None, str | None]:
+    if article_file_path is None or not article_file_path.strip():
+        return None, None
+
+    tokens = [
+        token
+        for token in re.split(r"[^A-Za-z0-9]+", Path(article_file_path).stem)
+        if token.strip()
+    ]
+    author: str | None = None
+    year: str | None = None
+    for token in tokens:
+        if token.lower() in _DISPLAY_LABEL_GENERIC_TOKENS:
+            continue
+        author_year_match = _ARTICLE_AUTHOR_YEAR_TOKEN_PATTERN.fullmatch(token)
+        if author_year_match is not None:
+            return (
+                _normalize_author_label(author_year_match.group("author")),
+                author_year_match.group("year"),
+            )
+        if author is None and token.isalpha():
+            author = _normalize_author_label(token)
+        if year is None and _ARTICLE_YEAR_TOKEN_PATTERN.fullmatch(token):
+            year = token
+    return author, year
+
+
+def _publication_year_from_article_text(article_markdown_text: str | None) -> str | None:
+    if article_markdown_text is None or not article_markdown_text.strip():
+        return None
+
+    header_text = "\n".join(article_markdown_text.splitlines()[:40])
+    for pattern in (_ARTICLE_PUBLISHED_YEAR_PATTERN, _ARTICLE_COPYRIGHT_YEAR_PATTERN):
+        match = pattern.search(header_text)
+        if match is not None:
+            return match.group("year")
+
+    fallback_match = _ARTICLE_YEAR_PATTERN.search(header_text)
+    if fallback_match is not None:
+        return fallback_match.group("year")
+    return None
+
+
+def _normalize_author_label(token: str) -> str:
+    return token[0].upper() + token[1:].lower()
 
 
 def _instrument_keys_from_contexts(
@@ -336,6 +682,44 @@ def _instrument_keys_from_contexts(
     return tuple(seen.keys())
 
 
+def _template5_table_contexts(
+    instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
+) -> tuple[InstrumentContextExtractionResult, ...]:
+    eligible = tuple(
+        context for context in instrument_contexts if _template5_is_context_eligible(context)
+    )
+    preferred = tuple(
+        context for context in eligible if context.instrument_role in _TEMPLATE5_PREFERRED_ROLES
+    )
+    if preferred:
+        return preferred
+    return eligible
+
+
+def _template5_is_context_eligible(context: InstrumentContextExtractionResult) -> bool:
+    if context.instrument_role in _TEMPLATE5_EXCLUDED_ROLES:
+        return False
+
+    instrument_name = _field_text(context.instrument_name)
+    return _template5_is_tableworthy_instrument_name(instrument_name)
+
+
+def _template5_is_tableworthy_instrument_name(instrument_name: str | None) -> bool:
+    if instrument_name is None:
+        return True
+
+    normalized_name = instrument_name.strip()
+    if not normalized_name:
+        return False
+
+    normalized_token = re.sub(r"[^A-Za-z0-9]+", "", normalized_name).upper()
+    if normalized_token in _TEMPLATE5_EXCLUDED_NAME_TOKENS:
+        return False
+
+    normalized_phrase = re.sub(r"\s+", " ", normalized_name).strip().lower()
+    return normalized_phrase not in _TEMPLATE5_EXCLUDED_NAME_PHRASES
+
+
 def _template7_instrument_keys_from_contexts(
     instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
 ) -> tuple[InstrumentKey, ...]:
@@ -343,6 +727,15 @@ def _template7_instrument_keys_from_contexts(
     for context in instrument_contexts:
         seen[_template7_instrument_key_from_context(context)] = None
     return tuple(seen.keys())
+
+
+def _template6_instrument_key_by_id(
+    instrument_contexts: tuple[InstrumentContextExtractionResult, ...],
+) -> dict[str, InstrumentKey]:
+    mapping: dict[str, InstrumentKey] = {}
+    for context in sorted(instrument_contexts, key=lambda item: item.id):
+        mapping.setdefault(context.instrument_id, _template7_instrument_key_from_context(context))
+    return mapping
 
 
 def _instrument_key_by_id(
@@ -458,6 +851,26 @@ def _template7_synthesis_map(
     return mapping
 
 
+def _template6_bundle_sort_key(
+    *,
+    bundle: BoxAssessmentBundle,
+    instrument_key_by_id: dict[str, InstrumentKey],
+) -> tuple[str, str, str, str, int, str]:
+    box = bundle.box_assessment
+    instrument_key = instrument_key_by_id.get(
+        box.instrument_id,
+        (f"instrument:{box.instrument_id}", None, None),
+    )
+    return (
+        instrument_key[0].lower(),
+        (instrument_key[1] or "").lower(),
+        (instrument_key[2] or "").lower(),
+        box.study_id,
+        0 if box.cosmin_box == BOX_1_KEY else 1,
+        box.id,
+    )
+
+
 def _synthesis_map(
     synthesis_results: tuple[SynthesisAggregateResult, ...],
 ) -> dict[tuple[InstrumentKey, str], SynthesisAggregateResult]:
@@ -489,11 +902,63 @@ def _sample_size_for_role(
 ) -> int | None:
     if study is None:
         return None
+    if role is SampleSizeRole.ENROLLMENT:
+        return _sample_size_for_roles(
+            study=study,
+            roles=(SampleSizeRole.ENROLLMENT, SampleSizeRole.VALIDATION),
+        )
+    if role is SampleSizeRole.ANALYZED:
+        return _sample_size_for_roles(
+            study=study,
+            roles=(SampleSizeRole.ANALYZED, SampleSizeRole.VALIDATION),
+        )
+    return _sample_size_for_roles(study=study, roles=(role,))
+
+
+def _sample_size_for_roles(
+    *,
+    study: StudyContextExtractionResult,
+    roles: tuple[SampleSizeRole, ...],
+) -> int | None:
     observations = sorted(study.sample_size_observations, key=lambda item: item.id)
-    for observation in observations:
-        if observation.role is role:
-            return observation.sample_size_normalized
+    for role in roles:
+        role_values = [
+            observation.sample_size_normalized
+            for observation in observations
+            if observation.role is role
+        ]
+        if role_values:
+            return max(role_values)
     return None
+
+
+def _template5_analyzed_n(
+    *,
+    study: StudyContextExtractionResult | None,
+    instrument_context: InstrumentContextExtractionResult,
+    analyzed_sample_sizes: dict[tuple[str, str], int],
+) -> int | None:
+    study_value = _sample_size_for_role(study, SampleSizeRole.ANALYZED)
+    if study_value is not None:
+        return study_value
+    return analyzed_sample_sizes.get((instrument_context.study_id, instrument_context.instrument_id))
+
+
+def _template5_analyzed_sample_size_map(
+    measurement_results: tuple[MeasurementPropertyRatingResult, ...],
+) -> dict[tuple[str, str], int]:
+    grouped: dict[tuple[str, str], set[int]] = defaultdict(set)
+    for result in measurement_results:
+        sample_size_raw = result.inputs_used.get("sample_size_selected")
+        if not isinstance(sample_size_raw, int) or sample_size_raw < 0:
+            continue
+        grouped[(result.study_id, result.instrument_id)].add(sample_size_raw)
+
+    resolved: dict[tuple[str, str], int] = {}
+    for key, sample_sizes in grouped.items():
+        if len(sample_sizes) == 1:
+            resolved[key] = next(iter(sample_sizes))
+    return resolved
 
 
 def _raw_result_text(raw_results: tuple[RawResultRecord, ...]) -> str | None:
@@ -560,6 +1025,53 @@ def _validated_template7_subscale_text(value: str | None) -> str | None:
     return normalized
 
 
+def _study_ids_with_content_validity_signal(
+    study_contexts: tuple[StudyContextExtractionResult, ...],
+) -> set[str]:
+    matching: set[str] = set()
+    for study in study_contexts:
+        if _field_mentions_property(
+            field=study.measurement_properties_mentioned,
+            property_name="content_validity",
+        ):
+            matching.add(study.study_id)
+    return matching
+
+
+def _field_mentions_property(*, field: ContextFieldExtraction, property_name: str) -> bool:
+    expected = _normalized_property_token(property_name)
+    for candidate in field.candidates:
+        for token in _candidate_property_tokens(candidate):
+            if token == expected:
+                return True
+    return False
+
+
+def _candidate_property_tokens(candidate: ContextValueCandidate) -> tuple[str, ...]:
+    value = candidate.normalized_value
+    if isinstance(value, tuple):
+        values = [item for item in value if isinstance(item, str)]
+    elif isinstance(value, str):
+        values = [value]
+    else:
+        values = []
+
+    if not values and candidate.raw_text:
+        values = [candidate.raw_text]
+
+    deduped: list[str] = []
+    for item in values:
+        normalized = _normalized_property_token(item)
+        if normalized and normalized not in deduped:
+            deduped.append(normalized)
+    return tuple(deduped)
+
+
+def _normalized_property_token(value: str) -> str:
+    compact = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return compact
+
+
 def _field_text(field: ContextFieldExtraction) -> str | None:
     values = [_candidate_value_text(candidate) for candidate in field.candidates]
     deduped: list[str] = []
@@ -589,6 +1101,19 @@ def _template5_legends() -> tuple[TableLegendEntry, ...]:
         TableLegendEntry(
             key="blank_or_na",
             description="Blank/NA fields indicate not assessed or not reported.",
+        ),
+    )
+
+
+def _template6_legends() -> tuple[TableLegendEntry, ...]:
+    return (
+        TableLegendEntry(
+            key="box_summary",
+            description="Box-level reviewer-required/manual assessment summary row.",
+        ),
+        TableLegendEntry(
+            key="item",
+            description="Item-level row; pending/manual state appears in status columns.",
         ),
     )
 

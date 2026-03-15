@@ -15,6 +15,7 @@ from cosmin_assistant.extract import (
 )
 from cosmin_assistant.models import PropertyActivationStatus
 from cosmin_assistant.tables.output_builders import export_run_outputs
+from cosmin_assistant.utils import canonicalize_artifact_prefix
 
 _FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "markdown"
 _FRANCHIGNONI_PATH = _FIXTURE_DIR / "nonsci_franchignoni2023_rasch.md"
@@ -410,11 +411,12 @@ def test_export_writes_prefixed_and_legacy_artifacts_for_named_papers(tmp_path: 
         outputs = export_run_outputs(run=run, out_dir=out_dir)
 
         manifest = json.loads(Path(outputs["run_manifest_json"]).read_text(encoding="utf-8"))
-        assert manifest["artifact_prefix"] == article_path.stem
+        expected_prefix = canonicalize_artifact_prefix(article_path=article_path)
+        assert manifest["artifact_prefix"] == expected_prefix
 
         for legacy_name in _LEGACY_ARTIFACT_FILE_NAMES:
             legacy_path = out_dir / legacy_name
-            prefixed_path = out_dir / f"{article_path.stem}__{legacy_name}"
+            prefixed_path = out_dir / f"{expected_prefix}__{legacy_name}"
             assert legacy_path.exists()
             assert prefixed_path.exists()
             assert legacy_path.stat().st_size > 0
@@ -429,9 +431,9 @@ def test_export_prefix_sanitizes_spaces_and_symbols_conservatively(tmp_path: Pat
     outputs = export_run_outputs(run=run, out_dir=tmp_path / "sanitized_prefix")
 
     manifest = json.loads(Path(outputs["run_manifest_json"]).read_text(encoding="utf-8"))
-    assert manifest["artifact_prefix"] == "My_Paper_v12026"
+    assert manifest["artifact_prefix"] == "my_paper_v1_2026"
     assert (
-        Path(outputs["run_manifest_json"]).parent / "My_Paper_v12026__run_manifest.json"
+        Path(outputs["run_manifest_json"]).parent / "my_paper_v1_2026__run_manifest.json"
     ).exists()
 
 

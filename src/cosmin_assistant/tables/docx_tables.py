@@ -1,4 +1,4 @@
-"""DOCX exports for COSMIN-style Template 5/7/8 intermediate tables.
+"""DOCX exports for COSMIN-style Template 5/6/7/8 intermediate tables.
 
 This module consumes intermediate table objects and remains independent from
 scoring/synthesis logic.
@@ -24,6 +24,9 @@ from cosmin_assistant.tables.intermediate_models import (
     TableLegendEntry,
     Template5CharacteristicsRow,
     Template5CharacteristicsTable,
+    Template6ContentValidityRow,
+    Template6ContentValidityTable,
+    Template6RowKind,
     Template7EvidenceRow,
     Template7EvidenceTable,
     Template7RowKind,
@@ -38,6 +41,7 @@ _FONT_SIZE_PT = 9
 _RowT = TypeVar(
     "_RowT",
     "_Template5Payload",
+    "_Template6Payload",
     "_Template7Payload",
     "_Template8Payload",
 )
@@ -69,8 +73,14 @@ class _ColumnSpec(Generic[_RowT]):
     align_right: bool = False
 
 
+@dataclass(frozen=True)
+class _Template6Payload:
+    row: Template6ContentValidityRow
+    blank_group_fields: bool
+
+
 class CosminTableDocxExporter:
-    """DOCX exporter for COSMIN-style Template 5/7/8 tables."""
+    """DOCX exporter for COSMIN-style Template 5/6/7/8 tables."""
 
     def export_template5(
         self,
@@ -91,6 +101,44 @@ class CosminTableDocxExporter:
             for row in table.rows
         )
         _render_table(document=document, rows=rows, columns=specs, group_key_fn=_group_key_t5)
+        _append_legends(document, table.legends)
+        return _save_document(document, output_path)
+
+    def export_template6(
+        self,
+        *,
+        table: Template6ContentValidityTable,
+        output_path: str | Path,
+    ) -> Path:
+        """Export Template 6 equivalent table to DOCX."""
+
+        document = Document()
+        document.add_heading(table.title, level=1)
+        specs = _template6_columns()
+
+        rows: list[_Template6Payload] = []
+        previous_group_key: tuple[str, str | None, str | None, str] | None = None
+        for row in table.rows:
+            group_key = (
+                row.instrument_name,
+                row.instrument_version,
+                row.subscale,
+                row.study_id,
+            )
+            rows.append(
+                _Template6Payload(
+                    row=row,
+                    blank_group_fields=previous_group_key == group_key,
+                )
+            )
+            previous_group_key = group_key
+
+        _render_table(
+            document=document,
+            rows=tuple(rows),
+            columns=specs,
+            group_key_fn=_group_key_t6,
+        )
         _append_legends(document, table.legends)
         return _save_document(document, output_path)
 
@@ -186,6 +234,16 @@ def export_template5_docx(
     """Export Template 5 equivalent table to DOCX."""
 
     return CosminTableDocxExporter().export_template5(table=table, output_path=output_path)
+
+
+def export_template6_docx(
+    *,
+    table: Template6ContentValidityTable,
+    output_path: str | Path,
+) -> Path:
+    """Export Template 6 equivalent table to DOCX."""
+
+    return CosminTableDocxExporter().export_template6(table=table, output_path=output_path)
 
 
 def export_template7_docx(
@@ -346,7 +404,13 @@ def _template5_columns() -> tuple[_ColumnSpec[_Template5Payload], ...]:
                 "" if payload.blank_group_fields else _stringify(payload.row.subscale)
             ),
         ),
-        _ColumnSpec(header="Study", value_getter=lambda payload: payload.row.study_id),
+        _ColumnSpec(
+            header="Study",
+            value_getter=lambda payload: _study_label_text(
+                study_id=payload.row.study_id,
+                study_display_label=payload.row.study_display_label,
+            ),
+        ),
         _ColumnSpec(
             header="Study Design",
             value_getter=lambda payload: _stringify(payload.row.study_design),
@@ -389,6 +453,88 @@ def _template5_columns() -> tuple[_ColumnSpec[_Template5Payload], ...]:
     )
 
 
+def _template6_columns() -> tuple[_ColumnSpec[_Template6Payload], ...]:
+    return (
+        _ColumnSpec(
+            header="PROM",
+            value_getter=lambda payload: (
+                "" if payload.blank_group_fields else payload.row.instrument_name
+            ),
+        ),
+        _ColumnSpec(
+            header="Version",
+            value_getter=lambda payload: (
+                "" if payload.blank_group_fields else _stringify(payload.row.instrument_version)
+            ),
+        ),
+        _ColumnSpec(
+            header="Subscale",
+            value_getter=lambda payload: (
+                "" if payload.blank_group_fields else _stringify(payload.row.subscale)
+            ),
+        ),
+        _ColumnSpec(
+            header="Study",
+            value_getter=lambda payload: (
+                ""
+                if payload.blank_group_fields
+                else _study_label_text(
+                    study_id=payload.row.study_id,
+                    study_display_label=payload.row.study_display_label,
+                )
+            ),
+        ),
+        _ColumnSpec(
+            header="COSMIN Box",
+            value_getter=lambda payload: (
+                payload.row.cosmin_box
+                if payload.row.row_kind is Template6RowKind.BOX_SUMMARY
+                else ""
+            ),
+        ),
+        _ColumnSpec(
+            header="Measurement Property",
+            value_getter=lambda payload: (
+                payload.row.measurement_property
+                if payload.row.row_kind is Template6RowKind.BOX_SUMMARY
+                else ""
+            ),
+        ),
+        _ColumnSpec(
+            header="Box Rating",
+            value_getter=lambda payload: (
+                _stringify(payload.row.box_rating)
+                if payload.row.row_kind is Template6RowKind.BOX_SUMMARY
+                else ""
+            ),
+        ),
+        _ColumnSpec(
+            header="Item Code",
+            value_getter=lambda payload: (
+                _stringify(payload.row.item_code)
+                if payload.row.row_kind is Template6RowKind.ITEM
+                else ""
+            ),
+        ),
+        _ColumnSpec(
+            header="Item Rating",
+            value_getter=lambda payload: (
+                _stringify(payload.row.item_rating)
+                if payload.row.row_kind is Template6RowKind.ITEM
+                else ""
+            ),
+        ),
+        _ColumnSpec(
+            header="Uncertainty Status",
+            value_getter=lambda payload: _stringify(payload.row.uncertainty_status),
+        ),
+        _ColumnSpec(
+            header="Reviewer Status",
+            value_getter=lambda payload: _stringify(payload.row.reviewer_decision_status),
+        ),
+    )
+
+
 def _template7_columns() -> tuple[_ColumnSpec[_Template7Payload], ...]:
     return (
         _ColumnSpec(
@@ -418,7 +564,12 @@ def _template7_columns() -> tuple[_ColumnSpec[_Template7Payload], ...]:
         _ColumnSpec(
             header="Study",
             value_getter=lambda payload: (
-                "Summary" if payload.summary_label else _stringify(payload.row.study_id)
+                "Summary"
+                if payload.summary_label
+                else _study_label_text(
+                    study_id=payload.row.study_id,
+                    study_display_label=payload.row.study_display_label,
+                )
             ),
         ),
         _ColumnSpec(
@@ -506,6 +657,11 @@ def _group_key_t5(payload: _Template5Payload) -> tuple[str, str | None, str | No
     return (row.instrument_name, row.instrument_version, row.subscale)
 
 
+def _group_key_t6(payload: _Template6Payload) -> tuple[str, str | None, str | None]:
+    row = payload.row
+    return (row.instrument_name, row.instrument_version, row.subscale)
+
+
 def _group_key_t7(payload: _Template7Payload) -> tuple[str, str | None, str | None]:
     row = payload.row
     return (row.instrument_name, row.instrument_version, row.subscale)
@@ -528,3 +684,9 @@ def _bool_text(value: bool | None) -> str:
 
 def _stringify(value: str | None) -> str:
     return value or ""
+
+
+def _study_label_text(*, study_id: str | None, study_display_label: str | None) -> str:
+    if study_display_label is not None:
+        return study_display_label
+    return _stringify(study_id)

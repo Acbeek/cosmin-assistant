@@ -218,7 +218,8 @@ _GENERIC_INSTRUMENT_TOKEN_RE = re.compile(
 )
 _GENERIC_INSTRUMENT_CONTEXT_RE = re.compile(
     r"\b(?:instrument|questionnaire|scale|survey|measure|tool|test|score|scores|"
-    r"outcome|comparing|correlation|validity|reliability)\b",
+    r"outcome|compar(?:e|ed|ing|ison)|correlat(?:ion|ions|e|ed|ing)|"
+    r"validity|reliability)\b",
     re.IGNORECASE,
 )
 _RATER_RELIABILITY_SPAN_RE = re.compile(
@@ -1537,6 +1538,9 @@ def _detect_responsiveness_hypothesis_status(text_lower: str) -> ResponsivenessH
             "a-priori hypothesis",
             "predefined hypothesis",
             "pre-specified hypothesis",
+            "we hypothesized",
+            "hypothesized that",
+            "it was hypothesized",
         )
     ):
         return ResponsivenessHypothesisStatus.PREDEFINED

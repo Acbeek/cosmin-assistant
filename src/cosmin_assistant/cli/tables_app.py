@@ -1,4 +1,4 @@
-"""Typer CLI entry point for post-review Template 7/8 exports."""
+"""Typer CLI entry point for post-review Template 5/6/7/8 exports."""
 
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ TemplateOption = Annotated[
     typer.Option(
         "--template",
         case_sensitive=False,
-        help="Template selection: 7, 8, or all.",
+        help="Template selection: 5, 6, 7, 8, or all.",
     ),
 ]
 AllowProvisionalOption = Annotated[
@@ -61,7 +61,7 @@ def main(
     template: TemplateOption = TableTemplateSelection.ALL,
     allow_provisional: AllowProvisionalOption = False,
 ) -> None:
-    """Export COSMIN-style Template 7/8 artifacts from reviewed output directories."""
+    """Export COSMIN-style Template 5/6/7/8 artifacts from reviewed output directories."""
 
     try:
         ensure_supported_python()

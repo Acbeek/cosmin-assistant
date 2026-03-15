@@ -8,6 +8,13 @@ from typing import Annotated
 import typer
 
 from cosmin_assistant.cli.pipeline import run_provisional_assessment
+from cosmin_assistant.cli.workflow_hints import (
+    default_review_request_path,
+    extend_lines,
+    handoff_lines,
+    review_request_starter_lines,
+    shell_command,
+)
 from cosmin_assistant.models import ProfileType
 from cosmin_assistant.tables import export_run_outputs
 from cosmin_assistant.utils import ensure_supported_python
@@ -64,6 +71,30 @@ def main(
     typer.echo(f"Completed provisional COSMIN assessment for {article}")
     for key in sorted(output_paths):
         typer.echo(f"{key}: {output_paths[key]}")
+
+    review_request_path = default_review_request_path(run_dir=out)
+    for line in handoff_lines(
+        *extend_lines(
+            (
+                f"provisional_run_dir: {out}",
+                f"review_request: {review_request_path}",
+                "review_file_note: --review-file is not the metadata YAML; "
+                "use a separate YAML/JSON review request bundle with overrides "
+                "and adjudication notes.",
+            ),
+            review_request_starter_lines(),
+            (
+                "next: "
+                + shell_command(
+                    "cosmin-review",
+                    out,
+                    "--review-file",
+                    review_request_path,
+                ),
+            ),
+        )
+    ):
+        typer.echo(line)
 
 
 def run() -> None:

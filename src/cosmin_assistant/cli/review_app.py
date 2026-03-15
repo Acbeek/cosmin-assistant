@@ -7,6 +7,13 @@ from typing import Annotated
 
 import typer
 
+from cosmin_assistant.cli.workflow_hints import (
+    default_metadata_review_summary_path,
+    default_review_output_dir,
+    handoff_lines,
+    metadata_path_for_run_dir,
+    shell_command,
+)
 from cosmin_assistant.review import apply_review_request_file
 from cosmin_assistant.utils import ensure_supported_python
 
@@ -32,7 +39,7 @@ ReviewFileOption = Annotated[
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="YAML/JSON file with overrides and adjudication notes.",
+        help="YAML/JSON review request bundle with overrides and adjudication notes; not the metadata YAML.",
     ),
 ]
 OutOption = Annotated[
@@ -80,6 +87,34 @@ def main(
     typer.echo(f"Completed reviewer override application for {provisional_dir}")
     for key in sorted(output_paths):
         typer.echo(f"{key}: {output_paths[key]}")
+
+    reviewed_dir = out if out is not None else default_review_output_dir(
+        provisional_dir=provisional_dir,
+        finalize=finalize,
+    )
+    metadata_path = metadata_path_for_run_dir(run_dir=provisional_dir)
+    summary_path = default_metadata_review_summary_path(
+        run_dir=reviewed_dir,
+        finalized=finalize,
+    )
+    for line in handoff_lines(
+        f"reviewed_run_dir: {reviewed_dir}",
+        f"metadata_file_default: {metadata_path}",
+        f"metadata_review_summary: {summary_path}",
+        "next: "
+        + shell_command(
+            "cosmin-metadata",
+            "review",
+            "--metadata",
+            metadata_path,
+            "--run-dir",
+            reviewed_dir,
+            "--json",
+            "--report-out",
+            summary_path,
+        ),
+    ):
+        typer.echo(line)
 
 
 def run_review() -> None:

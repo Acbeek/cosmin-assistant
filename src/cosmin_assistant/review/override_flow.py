@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -44,6 +45,7 @@ DOCX_FILE = "summary_report.docx"
 OVERRIDES_FILE = "review_overrides.json"
 ADJUDICATIONS_FILE = "adjudication_notes.json"
 REVIEW_STATE_FILE = "review_state.json"
+RUN_MANIFEST_FILE = "run_manifest.json"
 
 
 @dataclass(frozen=True)
@@ -161,6 +163,7 @@ def apply_review_request_bundle(
     """Apply review overrides and adjudications to provisional JSON outputs."""
 
     source_dir = Path(provisional_dir).expanduser().resolve()
+    source_manifest_path, source_prefixed_manifest_paths = _manifest_copy_sources(source_dir)
     evidence_payload = _load_required_json(source_dir / EVIDENCE_FILE)
     rob_payload = _load_required_json(source_dir / ROB_FILE)
     measurement_payload = _load_required_json(source_dir / MEASUREMENT_FILE)
@@ -240,6 +243,7 @@ def apply_review_request_bundle(
     overrides_path = destination_dir / OVERRIDES_FILE
     adjudications_path = destination_dir / ADJUDICATIONS_FILE
     review_state_path = destination_dir / REVIEW_STATE_FILE
+    run_manifest_path = destination_dir / RUN_MANIFEST_FILE
 
     _write_json(evidence_path, evidence_payload)
     _write_json(rob_path, reviewed_rob)
@@ -249,6 +253,13 @@ def apply_review_request_bundle(
     _write_json(overrides_path, [item.model_dump(mode="json") for item in all_overrides])
     _write_json(adjudications_path, [item.model_dump(mode="json") for item in all_adjudications])
     _write_json(review_state_path, review_state.model_dump(mode="json"))
+    shutil.copyfile(source_manifest_path, run_manifest_path)
+
+    copied_prefixed_manifests: list[Path] = []
+    for source_prefixed_manifest in source_prefixed_manifest_paths:
+        destination_prefixed_manifest = destination_dir / source_prefixed_manifest.name
+        shutil.copyfile(source_prefixed_manifest, destination_prefixed_manifest)
+        copied_prefixed_manifests.append(destination_prefixed_manifest)
 
     summary_markdown = _build_review_summary_markdown(
         review_state=review_state,
@@ -268,7 +279,7 @@ def apply_review_request_bundle(
     docx_exporter = ProvisionalDocxExporter()
     docx_exporter.export_summary(output_path=docx_path, report_markdown=summary_markdown)
 
-    return {
+    outputs = {
         "evidence_json": str(evidence_path),
         "rob_assessment_json": str(rob_path),
         "measurement_property_results_json": str(measurement_path),
@@ -280,7 +291,47 @@ def apply_review_request_bundle(
         "review_overrides_json": str(overrides_path),
         "adjudication_notes_json": str(adjudications_path),
         "review_state_json": str(review_state_path),
+        "run_manifest_json": str(run_manifest_path),
     }
+    if copied_prefixed_manifests:
+        outputs["run_manifest_json_prefixed"] = str(copied_prefixed_manifests[0])
+    return outputs
+
+
+def _manifest_copy_sources(source_dir: Path) -> tuple[Path, tuple[Path, ...]]:
+    manifest_path = source_dir / RUN_MANIFEST_FILE
+    manifest_payload = _load_required_json(manifest_path)
+    if not isinstance(manifest_payload, dict):
+        msg = f"{RUN_MANIFEST_FILE} must contain a JSON object payload."
+        raise ValueError(msg)
+
+    prefixed_manifest_names: list[str] = []
+    prefixed_section = manifest_payload.get("artifact_filenames_prefixed")
+    if isinstance(prefixed_section, dict):
+        prefixed_name = prefixed_section.get("run_manifest_json")
+        if (
+            isinstance(prefixed_name, str)
+            and prefixed_name.strip()
+            and prefixed_name != RUN_MANIFEST_FILE
+        ):
+            prefixed_manifest_names.append(prefixed_name)
+
+    for candidate in sorted(source_dir.glob(f"*__{RUN_MANIFEST_FILE}")):
+        if candidate.name not in prefixed_manifest_names:
+            prefixed_manifest_names.append(candidate.name)
+
+    prefixed_paths: list[Path] = []
+    for prefixed_name in prefixed_manifest_names:
+        prefixed_path = source_dir / prefixed_name
+        if not prefixed_path.exists():
+            msg = (
+                f"{RUN_MANIFEST_FILE} declares a prefixed manifest that is missing: "
+                f"{prefixed_path}"
+            )
+            raise ValueError(msg)
+        prefixed_paths.append(prefixed_path)
+
+    return manifest_path, tuple(prefixed_paths)
 
 
 def _load_required_json(path: Path) -> Any:

@@ -1,4 +1,4 @@
-"""Structural tests for Template 5/7/8 DOCX table exports."""
+"""Structural tests for Template 5/6/7/8 DOCX table exports."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from docx.table import _Cell, _Row
 
 from cosmin_assistant.tables import (
     export_template5_docx,
+    export_template6_docx,
     export_template7_docx,
     export_template8_docx,
 )
@@ -18,6 +19,9 @@ from cosmin_assistant.tables.intermediate_models import (
     TableLegendEntry,
     Template5CharacteristicsRow,
     Template5CharacteristicsTable,
+    Template6ContentValidityRow,
+    Template6ContentValidityTable,
+    Template6RowKind,
     Template7EvidenceRow,
     Template7EvidenceTable,
     Template7RowKind,
@@ -36,6 +40,7 @@ def test_template5_docx_structure_grouping_and_legend(tmp_path: Path) -> None:
                 instrument_version="v1",
                 subscale="pain",
                 study_id="study.1",
+                study_display_label="Hafner et al., 2022",
                 study_order_within_instrument=1,
                 is_additional_study_row=False,
                 study_design="prospective",
@@ -54,6 +59,7 @@ def test_template5_docx_structure_grouping_and_legend(tmp_path: Path) -> None:
                 instrument_version="v1",
                 subscale="pain",
                 study_id="study.2",
+                study_display_label="Hafner et al., 2022",
                 study_order_within_instrument=2,
                 is_additional_study_row=True,
                 study_design="prospective",
@@ -65,6 +71,7 @@ def test_template5_docx_structure_grouping_and_legend(tmp_path: Path) -> None:
                 instrument_version="v2",
                 subscale="pain",
                 study_id="study.3",
+                study_display_label="Hafner et al., 2022",
                 study_order_within_instrument=1,
                 is_additional_study_row=False,
                 study_design="cross-sectional",
@@ -111,7 +118,8 @@ def test_template5_docx_structure_grouping_and_legend(tmp_path: Path) -> None:
 
     rows = [[cell.text for cell in row.cells] for row in word_table.rows[1:]]
     assert rows[1][:3] == ["", "", ""]
-    assert rows[1][3] == "study.2"
+    assert rows[0][3] == "Hafner et al., 2022"
+    assert rows[1][3] == "Hafner et al., 2022"
     assert rows[0][8] == "41"
     assert word_table.rows[1].cells[8].paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
 
@@ -122,6 +130,102 @@ def test_template5_docx_structure_grouping_and_legend(tmp_path: Path) -> None:
     assert "Legend" in document_text
     assert "additional_study_row" in document_text
     assert "blank_or_na" in document_text
+
+
+def test_template6_docx_structure_grouping_and_legends(tmp_path: Path) -> None:
+    table = Template6ContentValidityTable(
+        id="table.6",
+        rows=(
+            Template6ContentValidityRow(
+                id="t6row.1",
+                row_kind=Template6RowKind.BOX_SUMMARY,
+                instrument_name="PROM-X",
+                instrument_version="v1",
+                subscale=None,
+                study_id="study.1",
+                study_display_label="Hafner et al., 2022",
+                cosmin_box="box_1_prom_development",
+                measurement_property="prom_development",
+                box_rating="doubtful",
+                item_code=None,
+                item_rating=None,
+                uncertainty_status="reviewer_required",
+                reviewer_decision_status="pending",
+            ),
+            Template6ContentValidityRow(
+                id="t6row.2",
+                row_kind=Template6RowKind.ITEM,
+                instrument_name="PROM-X",
+                instrument_version="v1",
+                subscale=None,
+                study_id="study.1",
+                study_display_label="Hafner et al., 2022",
+                cosmin_box="box_1_prom_development",
+                measurement_property="prom_development",
+                box_rating=None,
+                item_code="B1.1_target_population_definition",
+                item_rating=None,
+                uncertainty_status="reviewer_required",
+                reviewer_decision_status="pending",
+            ),
+            Template6ContentValidityRow(
+                id="t6row.3",
+                row_kind=Template6RowKind.BOX_SUMMARY,
+                instrument_name="PROM-X",
+                instrument_version="v1",
+                subscale=None,
+                study_id="study.1",
+                study_display_label="Hafner et al., 2022",
+                cosmin_box="box_2_content_validity",
+                measurement_property="content_validity",
+                box_rating="doubtful",
+                item_code=None,
+                item_rating=None,
+                uncertainty_status="reviewer_required",
+                reviewer_decision_status="pending",
+            ),
+        ),
+        legends=(
+            TableLegendEntry(key="box_summary", description="Box-level summary row."),
+            TableLegendEntry(key="item", description="Item-level row."),
+        ),
+    )
+
+    output_path = tmp_path / "template6.docx"
+    export_template6_docx(table=table, output_path=output_path)
+
+    doc = Document(str(output_path))
+    assert len(doc.tables) == 1
+    word_table = doc.tables[0]
+
+    headers = [cell.text for cell in word_table.rows[0].cells]
+    assert headers == [
+        "PROM",
+        "Version",
+        "Subscale",
+        "Study",
+        "COSMIN Box",
+        "Measurement Property",
+        "Box Rating",
+        "Item Code",
+        "Item Rating",
+        "Uncertainty Status",
+        "Reviewer Status",
+    ]
+    assert _has_repeat_header(word_table.rows[0]) is True
+
+    rows = [[cell.text for cell in row.cells] for row in word_table.rows[1:]]
+    assert rows[0][0] == "PROM-X"
+    assert rows[0][3] == "Hafner et al., 2022"
+    assert rows[1][0] == ""
+    assert rows[1][3] == ""
+    assert rows[1][7] == "B1.1_target_population_definition"
+    assert rows[1][8] == ""
+
+    document_text = "\n".join(paragraph.text for paragraph in doc.paragraphs)
+    assert "Legend" in document_text
+    assert "box_summary" in document_text
+    assert "item" in document_text
 
 
 def test_template7_docx_structure_and_summary_rows(tmp_path: Path) -> None:
@@ -136,6 +240,7 @@ def test_template7_docx_structure_and_summary_rows(tmp_path: Path) -> None:
                 subscale="pain",
                 measurement_property="reliability",
                 study_id="study.1",
+                study_display_label="Hafner et al., 2022",
                 study_order_within_instrument_property=1,
                 is_additional_study_row=False,
                 per_study_rob="adequate",
@@ -150,6 +255,7 @@ def test_template7_docx_structure_and_summary_rows(tmp_path: Path) -> None:
                 subscale="pain",
                 measurement_property="reliability",
                 study_id="study.2",
+                study_display_label="Hafner et al., 2022",
                 study_order_within_instrument_property=2,
                 is_additional_study_row=True,
                 per_study_rob="doubtful",
@@ -216,7 +322,8 @@ def test_template7_docx_structure_and_summary_rows(tmp_path: Path) -> None:
     rows = [[cell.text for cell in row.cells] for row in word_table.rows[1:]]
     # Additional study row keeps grouping by blanking PROM/version/subscale/property.
     assert rows[1][:4] == ["", "", "", ""]
-    assert rows[1][4] == "study.2"
+    assert rows[0][4] == "Hafner et al., 2022"
+    assert rows[1][4] == "Hafner et al., 2022"
     # Summary row under same group should retain blank group columns with explicit label.
     assert rows[2][:4] == ["", "", "", ""]
     assert rows[2][4] == "Summary"

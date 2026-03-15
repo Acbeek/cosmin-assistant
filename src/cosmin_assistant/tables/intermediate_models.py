@@ -28,6 +28,13 @@ class Template7RowKind(StrEnum):
     SUMMARY = "summary"
 
 
+class Template6RowKind(StrEnum):
+    """Row type for template 6 equivalent tables."""
+
+    BOX_SUMMARY = "box_summary"
+    ITEM = "item"
+
+
 class Template5CharacteristicsRow(ModelBase):
     """Template 5 equivalent row: study characteristics by instrument unit."""
 
@@ -36,6 +43,7 @@ class Template5CharacteristicsRow(ModelBase):
     instrument_version: str | None = None
     subscale: str | None = None
     study_id: StableId
+    study_display_label: str | None = None
     study_order_within_instrument: int = Field(ge=1)
     is_additional_study_row: bool
     study_design: str | None = None
@@ -59,6 +67,35 @@ class Template5CharacteristicsTable(ModelBase):
     legends: tuple[TableLegendEntry, ...]
 
 
+class Template6ContentValidityRow(ModelBase):
+    """Template 6 equivalent row for PROM development/content validity review."""
+
+    id: StableId
+    row_kind: Template6RowKind
+    instrument_name: NonEmptyText
+    instrument_version: str | None = None
+    subscale: str | None = None
+    study_id: StableId
+    study_display_label: str | None = None
+    cosmin_box: NonEmptyText
+    measurement_property: NonEmptyText
+    box_rating: str | None = None
+    item_code: str | None = None
+    item_rating: str | None = None
+    uncertainty_status: str | None = None
+    reviewer_decision_status: str | None = None
+
+
+class Template6ContentValidityTable(ModelBase):
+    """Template 6 equivalent intermediate table object."""
+
+    id: StableId
+    template_code: NonEmptyText = "template_6"
+    title: NonEmptyText = "PROM development and content-validity review workflow"
+    rows: tuple[Template6ContentValidityRow, ...]
+    legends: tuple[TableLegendEntry, ...]
+
+
 class Template7EvidenceRow(ModelBase):
     """Template 7 equivalent row with study and summary fields."""
 
@@ -69,6 +106,7 @@ class Template7EvidenceRow(ModelBase):
     subscale: str | None = None
     measurement_property: NonEmptyText
     study_id: StableId | None = None
+    study_display_label: str | None = None
     study_order_within_instrument_property: int | None = Field(default=None, ge=1)
     is_additional_study_row: bool | None = None
     per_study_rob: str | None = None

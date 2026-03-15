@@ -42,6 +42,10 @@ def test_no_op_review_preserves_artifacts_and_marks_finalized(tmp_path: Path) ->
     source_evidence = _load_json(provisional_dir / "evidence.json")
     source_measurement = _load_json(provisional_dir / "measurement_property_results.json")
     source_review_state = _load_json(provisional_dir / "review_state.json")
+    source_manifest_path = provisional_dir / "run_manifest.json"
+    source_prefixed_manifest_paths = sorted(provisional_dir.glob("*__run_manifest.json"))
+    assert source_manifest_path.exists()
+    assert len(source_prefixed_manifest_paths) == 1
 
     outputs = apply_review_request_bundle(
         provisional_dir=provisional_dir,
@@ -54,12 +58,23 @@ def test_no_op_review_preserves_artifacts_and_marks_finalized(tmp_path: Path) ->
     reviewed_evidence = _load_json(finalized_dir / "evidence.json")
     reviewed_measurement = _load_json(finalized_dir / "measurement_property_results.json")
     reviewed_review_state = _load_json(finalized_dir / "review_state.json")
+    finalized_manifest_path = finalized_dir / "run_manifest.json"
+    finalized_prefixed_manifest_path = finalized_dir / source_prefixed_manifest_paths[0].name
 
     assert source_evidence == reviewed_evidence
     assert source_measurement == reviewed_measurement
     assert source_review_state["review_status"] == "provisional"
     assert reviewed_review_state["review_status"] == "finalized"
     assert reviewed_review_state["overrides_applied_in_run"] == 0
+    assert finalized_manifest_path.exists()
+    assert finalized_prefixed_manifest_path.exists()
+    assert finalized_manifest_path.read_bytes() == source_manifest_path.read_bytes()
+    assert (
+        finalized_prefixed_manifest_path.read_bytes()
+        == source_prefixed_manifest_paths[0].read_bytes()
+    )
+    assert outputs["run_manifest_json"] == str(finalized_manifest_path)
+    assert outputs["run_manifest_json_prefixed"] == str(finalized_prefixed_manifest_path)
 
 
 def test_no_op_review_surfaces_box2_content_validity_as_pending_manual_review(
